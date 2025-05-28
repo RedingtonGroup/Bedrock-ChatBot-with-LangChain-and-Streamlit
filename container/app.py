@@ -2,9 +2,6 @@ import base64
 import random
 from io import BytesIO
 from typing import List, Tuple, Union
-import streamlit.components.v1 as components
-import uuid
-import html
 
 import streamlit as st
 from langchain_community.chat_message_histories import StreamlitChatMessageHistory
@@ -15,131 +12,6 @@ from langchain.chains import ConversationChain
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.prompts.chat import ChatPromptTemplate, MessagesPlaceholder
 from PIL import Image
-
-
-def render_copy_button(text: str, button_key: str = None):
-    """
-    Render an advanced copy button with better styling and functionality
-    """
-    if button_key is None:
-        button_key = str(uuid.uuid4())
-    
-    # Escape HTML characters in the text
-    escaped_text = html.escape(text).replace('\n', '\\n').replace('\r', '\\r')
-    
-    copy_button_html = f"""
-    <div style="margin: 10px 0; display: flex; justify-content: flex-end;">
-        <button 
-            id="copy-btn-{button_key}"
-            onclick="copyTextToClipboard_{button_key}()"
-            style="
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 8px;
-                cursor: pointer;
-                font-size: 13px;
-                font-weight: 500;
-                transition: all 0.3s ease;
-                box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
-                display: flex;
-                align-items: center;
-                gap: 6px;
-                min-width: 120px;
-                justify-content: center;
-            "
-            onmouseover="
-                this.style.transform='translateY(-2px)'; 
-                this.style.boxShadow='0 4px 12px rgba(102, 126, 234, 0.4)';
-                this.style.background='linear-gradient(135deg, #5a6fd8 0%, #6a4c93 100%)';
-            "
-            onmouseout="
-                this.style.transform='translateY(0)'; 
-                this.style.boxShadow='0 2px 8px rgba(102, 126, 234, 0.3)';
-                this.style.background='linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
-            "
-            title="Copy response to clipboard"
-        >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
-            </svg>
-            <span id="copy-text-{button_key}">Copy Response</span>
-        </button>
-    </div>
-    
-    <script>
-        function copyTextToClipboard_{button_key}() {{
-            const textToCopy = `{escaped_text}`;
-            const button = document.getElementById('copy-btn-{button_key}');
-            const buttonText = document.getElementById('copy-text-{button_key}');
-            
-            // Try using the Clipboard API first
-            if (navigator.clipboard && window.isSecureContext) {{
-                navigator.clipboard.writeText(textToCopy).then(function() {{
-                    // Success feedback
-                    buttonText.innerHTML = '✓ Copied!';
-                    button.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
-                    
-                    setTimeout(function() {{
-                        buttonText.innerHTML = 'Copy Response';
-                        button.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
-                    }}, 2000);
-                }}).catch(function(err) {{
-                    console.error('Failed to copy: ', err);
-                    fallbackCopy_{button_key}(textToCopy);
-                }});
-            }} else {{
-                // Fallback method
-                fallbackCopy_{button_key}(textToCopy);
-            }}
-        }}
-        
-        function fallbackCopy_{button_key}(text) {{
-            const textArea = document.createElement('textarea');
-            textArea.value = text;
-            textArea.style.position = 'fixed';
-            textArea.style.left = '-999999px';
-            textArea.style.top = '-999999px';
-            document.body.appendChild(textArea);
-            textArea.focus();
-            textArea.select();
-            
-            try {{
-                const successful = document.execCommand('copy');
-                const buttonText = document.getElementById('copy-text-{button_key}');
-                const button = document.getElementById('copy-btn-{button_key}');
-                
-                if (successful) {{
-                    buttonText.innerHTML = '✓ Copied!';
-                    button.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
-                    
-                    setTimeout(function() {{
-                        buttonText.innerHTML = 'Copy Response';
-                        button.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
-                    }}, 2000);
-                }} else {{
-                    buttonText.innerHTML = '❌ Failed';
-                    setTimeout(function() {{
-                        buttonText.innerHTML = 'Copy Response';
-                    }}, 2000);
-                }}
-            }} catch (err) {{
-                console.error('Fallback copy failed: ', err);
-                const buttonText = document.getElementById('copy-text-{button_key}');
-                buttonText.innerHTML = '❌ Failed';
-                setTimeout(function() {{
-                    buttonText.innerHTML = 'Copy Response';
-                }}, 2000);
-            }}
-            
-            document.body.removeChild(textArea);
-        }}
-    </script>
-    """
-    
-    components.html(copy_button_html, height=60)
-
 
 CLAUDE_PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -370,18 +242,10 @@ def display_chat_messages(uploaded_files: List[st.runtime.uploaded_file_manager.
                     st.markdown(message["content"][0]["text"])
 
             if message["role"] == "assistant":
-                response_text = ""
                 if isinstance(message["content"], str):
-                    response_text = message["content"]
                     st.markdown(message["content"])
                 elif "response" in message["content"]:
-                    response_text = message["content"]["response"]
                     st.markdown(message["content"]["response"])
-                
-                # Add copy button for assistant responses
-                if response_text and response_text != "Hi! I'm your AI Bot on Bedrock. How may I help you?":
-                    button_key = f"copy_{hash(response_text)}_{random.randint(1, 1000)}"
-                    render_copy_button(response_text, button_key)
 
 
 def langchain_messages_format(messages: List[Union[AIMessage, HumanMessage]]) -> List[Union[AIMessage, HumanMessage]]:
@@ -512,14 +376,6 @@ def main() -> None:
             response = generate_response(
                 conv_chain, [{"role": "user", "content": prompt_new}]
             )
-            
-            # Add copy button immediately after response generation
-            if response and "response" in response:
-                response_text = response["response"]
-                if response_text:
-                    button_key = f"copy_{hash(response_text)}_{random.randint(1, 1000)}"
-                    render_copy_button(response_text, button_key)
-            
         message = {"role": "assistant", "content": response}
         st.session_state.messages.append(message)
 
