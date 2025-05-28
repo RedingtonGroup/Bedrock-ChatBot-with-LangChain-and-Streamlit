@@ -49,6 +49,26 @@ def set_page_config() -> None:
     st.set_page_config(page_title="🤖 Chat with Bedrock", layout="wide")
     st.title("🤖 Chat with Bedrock")
 
+import streamlit as st
+
+def set_page_config() -> None:
+    """
+    Set the Streamlit page configuration.
+    """
+    st.set_page_config(page_title="Chat with R", layout="wide")
+
+    # Create columns for the GIF and the title text
+    col1, col2 = st.columns([0.05, 1]) # Adjust the ratio based on your GIF size
+
+    with col1:
+        st.image("images/redington_ai.gif", width=30) # Adjust width as needed
+
+    with col2:
+        st.markdown("<h1 style='margin-left: -15px;'>Chat with Bedrock</h1>", unsafe_allow_html=True) # Adjust margin-left
+
+# Call the function to set the page config
+set_page_config()
+
 
 def get_sidebar_params() -> Tuple[float, float, int, int, int, str, str]:
     """
