@@ -605,8 +605,14 @@ def main() -> None:
     #     disabled=image_upload_disabled,
     # )
 
-    # Display chat messages
-    display_chat_messages(uploaded_files, debug_mode)
+    # # Display chat messages
+    # display_chat_messages(uploaded_files, debug_mode)
+
+    # # User-provided prompt
+    # prompt = st.chat_input()
+
+    # Display chat messages - no uploaded files to pass
+    display_chat_messages(debug_mode=debug_mode)
 
     # User-provided prompt
     prompt = st.chat_input()
