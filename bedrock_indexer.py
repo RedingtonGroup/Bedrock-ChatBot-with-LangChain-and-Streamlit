@@ -29,9 +29,8 @@ def index_directory(directory_path, glob_pattern="**/[!.]*", chunk_size=500):
     # return FAISS.from_documents(docs, embeddings).save_local("faiss_index")
     vectorstore = FAISS.from_documents(docs, embeddings)
     vectorstore.save_local("faiss_index")
+    # print(f"Total documents indexed: {vectorstore.index.ntotal}")
     return vectorstore
-    print(f"Total documents indexed: {vectorstore.index.ntotal}")
-    
 # Example usage
 directory_path = "documents/"
 vectorstore = index_directory(directory_path)
