@@ -134,6 +134,33 @@ def render_sidebar() -> Tuple[Dict, int, str]:
     return model_kwargs, system_prompt, web_local, debug_mode
 
 
+def clean_response_text(text: str) -> str:
+    """
+    Clean the response text to remove any references to search results or RAG processing.
+    """
+    # Remove common phrases that expose backend processing
+    phrases_to_remove = [
+        r"based on the search results",
+        r"according to the search results",
+        r"from the search results",
+        r"the rag search results",
+        r"the search results show",
+        r"search results indicate",
+        r"based on the provided context",
+        r"according to the provided information",
+        r"from the provided context",
+    ]
+    
+    cleaned_text = text
+    for phrase in phrases_to_remove:
+        cleaned_text = re.sub(phrase, "", cleaned_text, flags=re.IGNORECASE)
+    
+    # Clean up any double spaces or line breaks
+    cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
+    
+    return cleaned_text
+
+
 def extract_reasoning_and_text(input: Any) -> str:
     """
     Extracts reasoning content and normal text from the LLM's output.
@@ -168,17 +195,21 @@ def extract_reasoning_and_text(input: Any) -> str:
                         display_text += "\n```\n"
                         yield "\n```\n"
                         in_reasoning_block = False
-                    display_text += text
-                    current_text += text
-                    yield text
+                    # Clean the text before yielding
+                    cleaned_text = clean_response_text(text)
+                    display_text += cleaned_text
+                    current_text += cleaned_text
+                    yield cleaned_text
         else:
             if in_reasoning_block:
                 display_text += "\n```\n"
                 yield "\n```\n"
                 in_reasoning_block = False
-            display_text += content
-            current_text += content
-            yield content
+            # Clean the content before yielding
+            cleaned_content = clean_response_text(content)
+            display_text += cleaned_content
+            current_text += cleaned_content
+            yield cleaned_content
             
     if in_reasoning_block:
         display_text += "\n```"
@@ -233,12 +264,23 @@ def init_runnablewithmessagehistory(
     # Clear any existing messages
     msgs.clear()
     
+    # Enhanced system prompt to ensure clean responses
+    enhanced_system_prompt = f"""{system_prompt}
+
+IMPORTANT INSTRUCTIONS:
+- You are a helpful AI assistant providing direct, clean responses to user questions
+- When you receive context information between <search> tags, use that information to inform your response, but DO NOT mention or reference the search results directly
+- DO NOT mention "RAG search results", "search results", or any backend processing details
+- Focus on providing a direct, helpful answer to the user's question
+- If context is provided, seamlessly integrate the relevant information into your natural response
+- Never expose the technical implementation details of how you obtained information"""
+    
     # Create the conversation chain
     conversation = (
         RunnableWithMessageHistory(
             ChatPromptTemplate.from_messages(
                 [
-                    ("system", system_prompt),
+                    ("system", enhanced_system_prompt),
                     MessagesPlaceholder(variable_name="chat_history"),
                     MessagesPlaceholder(variable_name="query"),
                 ]
@@ -281,8 +323,14 @@ def generate_response(
             continue
             
         if msg["role"] == "user":
-            # Use the original content (with RAG context) for LLM processing
-            msgs.add_user_message(msg["content"])
+            # For conversation history, use clean user prompt instead of RAG-enhanced version
+            user_prompt = msg.get("user_prompt", "")
+            if user_prompt:
+                msgs.add_user_message(user_prompt)
+            else:
+                # Fallback: extract clean prompt from content
+                clean_content = msg["content"].split("</search>\n\n", 1)[-1]
+                msgs.add_user_message(clean_content)
         elif msg["role"] == "assistant":
             # Remove thinking blocks from assistant messages
             clean_msg = re.sub(r'```thinking.*?```', '', msg["content"], flags=re.DOTALL)
@@ -290,9 +338,9 @@ def generate_response(
             if clean_msg:  # Only add if there's content after removal
                 msgs.add_ai_message(clean_msg)
     
-    # Format input as a chat message
+    # Format input as a chat message - this is the current user query with RAG context
     if isinstance(input, str):
-        # Remove any thinking blocks
+        # Remove any thinking blocks but keep RAG context for the LLM
         clean_input = re.sub(r'```thinking.*?```', '', input, flags=re.DOTALL)
         formatted_input = [{"role": "user", "content": clean_input}]
     else:
