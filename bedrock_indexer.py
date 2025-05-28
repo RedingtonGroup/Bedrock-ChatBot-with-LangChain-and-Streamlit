@@ -64,7 +64,7 @@ def load_docx_from_s3(bucket_name, prefix=""):
     return documents
 
 def index_s3_directory(bucket_name, prefix="", chunk_size=500):
-    embeddings = BedrockEmbeddings(model_id="amazon.titan-embed-text-v2:0")
+    embeddings = BedrockEmbeddings(model_id="amazon.titan-embed-text-v2:0", region_name="us-east-1")
     
     documents = load_docx_from_s3(bucket_name, prefix)
     
