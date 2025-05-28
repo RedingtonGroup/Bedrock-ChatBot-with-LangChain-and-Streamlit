@@ -70,7 +70,7 @@ def render_sidebar() -> Tuple[Dict, int, str]:
 
         web_local = st.selectbox(
             "Options",
-            ("Local", "Web", "RAG"),
+            ("RAG", "Local"),
             key=f"{st.session_state['widget_key']}_Options",
         )
 
