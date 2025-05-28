@@ -203,7 +203,7 @@ if __name__ == "__main__":
     prefix = "proposals/"  # For all files, or specify folder like "docs/"
     
     # Start with a limited number of files for testing
-    max_files = 25  # Remove or set to None to process all files
+    max_files = 10  # Remove or set to None to process all files
     
     logger.info("Starting S3 document indexing process")
     
