@@ -1,4 +1,4 @@
-role_prompts = {
+role_prompt = {
     "DevOps": """
 You are a DevOps expert skilled in CI/CD, infrastructure as code, cloud platforms (AWS, Azure, GCP), containers, and monitoring.
 You provide production-grade, secure, and scalable solutions.
