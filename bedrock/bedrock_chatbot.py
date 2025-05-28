@@ -2,6 +2,7 @@ import random
 from io import BytesIO
 from typing import List, Tuple, Union, Dict, Any
 import re
+import os # <-- ADD THIS IMPORT
 
 import streamlit as st
 from langchain_core.runnables import RunnableWithMessageHistory
@@ -10,18 +11,77 @@ from langchain_community.chat_message_histories import StreamlitChatMessageHisto
 from langchain_community.utilities import SerpAPIWrapper
 from langchain_aws import BedrockEmbeddings
 from langchain_community.vectorstores import FAISS
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, UnidentifiedImageError # Keep these if you want image display, even if not indexing them
 import pdfplumber
+import PyPDF2 # <-- ADD THIS IMPORT for PDF reading
 
 from dotenv import load_dotenv
 
 from config import config
 from models import ChatModel
 from role_prompt import role_prompt
-from bedrock_embedder import search_index
+from bedrock_embedder import search_index # Keep this for RAG search
+# REMOVE the old index_file imports, we'll re-implement or call directly
 
 # Load the env variables
 load_dotenv()
+
+# --- Functions from bedrock_embedder.py that you need to integrate ---
+# These functions will be placed directly in bedrock_chatbot.py or called appropriately.
+
+# Create a global variable for the embeddings (or initialize it inside main/functions as needed)
+# It's better to initialize this once in the main part of the app or lazily.
+# Let's put it as a global constant for simplicity for now.
+EMBEDDINGS = BedrockEmbeddings(model_id="amazon.titan-embed-text-v2:0") # Or 'cohere.embed-english-v3' if you prefer
+
+def read_file_content(file): # Renamed to avoid conflict if you still had an old one
+    if file.type == "application/pdf":
+        pdf_reader = PyPDF2.PdfReader(file)
+        document = ""
+        for page in range(len(pdf_reader.pages)):
+            document += pdf_reader.pages[page].extract_text()
+    else:
+        document = file.getvalue().decode("utf-8")
+    return document
+
+def save_faiss_index(vectorstore, index_path: str = "faiss_index"):
+    """Saves the FAISS vectorstore to the specified path."""
+    vectorstore.save_local(index_path)
+
+def perform_indexing(uploaded_files, index_path="faiss_index"):
+    """
+    Handles the core logic for indexing uploaded files into FAISS.
+    """
+    if uploaded_files:
+        documents_content = [read_file_content(file) for file in uploaded_files]
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+        docs = text_splitter.create_documents(documents_content)
+
+        # Initialize embeddings here if not global or ensure it's the correct one
+        current_embeddings = EMBEDDINGS # Using the global one
+
+        # Check if index_path exists and has content to load
+        if os.path.exists(index_path) and os.listdir(index_path):
+            try:
+                # Load existing index
+                vectorstore = FAISS.load_local(index_path, current_embeddings, allow_dangerous_deserialization=True)
+                vectorstore.add_documents(docs) # Add new documents to existing index
+                st.success(f"Added {len(docs)} new documents to existing index.")
+            except Exception as e:
+                st.error(f"Error loading or adding to existing index: {e}. Creating a new index.")
+                vectorstore = FAISS.from_documents(docs, current_embeddings)
+        else:
+            # Create new index
+            if not os.path.exists(index_path):
+                os.makedirs(index_path, exist_ok=True) # Ensure directory exists
+            vectorstore = FAISS.from_documents(docs, current_embeddings)
+            st.success(f"Created a new index with {len(docs)} documents.")
+
+        # Save the (new or updated) index
+        save_faiss_index(vectorstore, index_path)
+        return True # Indicate success
+    return False # Indicate no files to process or failure
+
 
 INIT_MESSAGE = {
     "role": "assistant",
@@ -40,7 +100,7 @@ def set_page_config() -> None:
     st.title("🤖 Chat with Redington AI Bot")
 
 
-def render_sidebar() -> Tuple[Dict, int, str]:
+def render_sidebar() -> Tuple[Dict, str, str, bool]: # Added debug_mode to return type
     """
     Render the sidebar UI and return the inference parameters.
     """
@@ -123,6 +183,44 @@ def render_sidebar() -> Tuple[Dict, int, str]:
                     step=8,
                     key=f"{st.session_state['widget_key']}_Max_Token",
                 )
+
+        # --- File Uploader and Index Button in Sidebar ---
+        st.markdown("---") # Separator for clarity
+        st.subheader("Document Indexing")
+
+        # Session state to store uploaded files
+        if "indexing_uploaded_files" not in st.session_state:
+            st.session_state.indexing_uploaded_files = []
+
+        # Streamlit file uploader for indexing
+        # Note: This is separate from the chat-related file uploader if you had one.
+        # This one is specifically for documents to be indexed.
+        uploaded_indexing_files = st.file_uploader(
+            "Choose files to index (PDF, TXT)",
+            type=["pdf", "txt"], # Limit types to those suitable for RAG indexing
+            accept_multiple_files=True,
+            key="indexing_file_uploader", # Unique key for this widget
+        )
+
+        # Update session state with new files
+        if uploaded_indexing_files:
+            # Clear previous files if new ones are uploaded to avoid re-processing same files
+            # Or append if you want cumulative indexing (more complex logic needed)
+            if uploaded_indexing_files != st.session_state.indexing_uploaded_files:
+                st.session_state.indexing_uploaded_files = uploaded_indexing_files
+
+
+        if st.button("Index Uploaded Documents"):
+            if st.session_state.indexing_uploaded_files:
+                with st.spinner("Indexing documents... This may take a moment."):
+                    success = perform_indexing(st.session_state.indexing_uploaded_files, index_path="faiss_index")
+                    if success:
+                        st.success("Documents indexed successfully!")
+                    else:
+                        st.error("Failed to index documents.")
+            else:
+                st.warning("Please upload files using the 'Choose files to index' uploader before clicking Index.")
+
 
     model_kwargs = {
         "top_p": top_p,
@@ -318,17 +416,18 @@ def new_chat() -> None:
     if "msgs" in st.session_state:
         st.session_state.msgs.clear()
     
-    # Reset file uploader
-    st.session_state["file_uploader_key"] = random.randint(1, 100)
-    
     # Clear any other chat-related state
     if "current_llm_text" in st.session_state:
         del st.session_state["current_llm_text"]
     if "current_display_text" in st.session_state:
         del st.session_state["current_display_text"]
+    
+    # Reset the indexing file uploader
+    st.session_state["indexing_file_uploader"] = random.randint(100001, 200000) # Re-randomize key
 
 
 def display_chat_messages(
+    # The uploaded_files parameter is for display, separate from indexing files
     uploaded_files: List[st.runtime.uploaded_file_manager.UploadedFile],
     debug_mode: bool = False
 ) -> None:
@@ -433,14 +532,14 @@ def display_assistant_message(message_content: Union[str, dict]) -> None:
         st.markdown(message_content["response"])
 
 
-def display_uploaded_files(
+def display_uploaded_files_for_chat( # Renamed to avoid confusion with indexing files
     uploaded_files: List[st.runtime.uploaded_file_manager.UploadedFile],
     message_images_list: List[str],
     uploaded_file_ids: List[str],
 ) -> List[Union[dict, str]]:
     """
-    Display uploaded images and return a list of image dictionaries for the prompt.
-    Also handle txt and pdf files.
+    Display uploaded images for chat context and return a list of image dictionaries for the prompt.
+    Also handle txt and pdf files for multimodal models if supported.
     """
     num_cols = 10
     cols = st.columns(num_cols)
@@ -472,14 +571,13 @@ def display_uploaded_files(
                     i = 0
             except UnidentifiedImageError:
                 # If not an image, try to read as a text or pdf file
+                # NOTE: For chat context, not indexing. Bedrock models may have token limits for direct text input.
                 if uploaded_file.type in [
                     "text/plain",
                     "text/csv",
                     "text/x-python-script",
                 ]:
-                    # Ensure we're at the start of the file
                     uploaded_file.seek(0)
-                    # Read file line by line
                     lines = uploaded_file.readlines()
                     text = "".join(line.decode() for line in lines)
                     content_files.append({"type": "text", "text": text})
@@ -488,7 +586,6 @@ def display_uploaded_files(
                     else:
                         st.write(f"📄 Uploaded text file: {uploaded_file.name}")
                 elif uploaded_file.type == "application/pdf":
-                    # Read pdf file
                     pdf_file = pdfplumber.open(uploaded_file)
                     page_text = ""
                     for page in pdf_file.pages:
@@ -508,27 +605,15 @@ def rag_search(prompt: str) -> tuple[str, str]:
         tuple: (enhanced_prompt_with_context, rag_context_only)
     """
     # Perform the search using the search_index function from bedrock_embedder.py
+    # This search_index is likely configured to use the global EMBEDDINGS from bedrock_embedder.py
+    # or it will re-initialize its own embeddings.
     docs = search_index(prompt, "faiss_index")
-    # Check if an error message was returned
-    if isinstance(docs[0], str):
-        return prompt, "Error retrieving RAG context"
-    
-    # Initialize Bedrock embeddings
-    embeddings = BedrockEmbeddings(model_id="amazon.titan-embed-text-v2:0")
+    # Check if an error message was returned (from the modified bedrock_embedder.py search_index)
+    if isinstance(docs, list) and docs and isinstance(docs[0], str): # Check if it's an error message from bedrock_embedder.py
+        return prompt, docs[0] # Return the error message as context, don't include it in prompt
 
-    # Set the path to the directory containing the FAISS index file
-    index_directory = "faiss_index"
-
-    # Set allow_dangerous_deserialization to True, needed for loading the FAISS index.
-    allow_dangerous = True
-
-    # Load the FAISS index from the directory
-    db = FAISS.load_local(
-        index_directory, embeddings, allow_dangerous_deserialization=allow_dangerous
-    )
-
-    # Perform the search
-    docs = db.similarity_search(prompt)
+    if not docs: # If no documents found after search_index
+        return prompt, "No relevant documents found in RAG index."
 
     # Format the RAG context
     rag_context = "\n\n".join(doc.page_content for doc in docs)
@@ -552,20 +637,30 @@ def web_or_local(prompt: str, web_local_rag: str) -> tuple[str, bool]:
         tuple: (enhanced_prompt, has_context)
     """
     has_context = False
-    
+    rag_context_info = "" # To capture RAG context message
+
     if web_local_rag == "Web":
         search = SerpAPIWrapper()
-        search_text = search.run(prompt)
-        web_content = (
-            "Here is the web search result: \n\n<search>\n\n"
-            + search_text
-            + "\n\n</search>\n\n"
-        )
-        prompt = web_content + prompt
-        has_context = True
+        try:
+            search_text = search.run(prompt)
+            web_content = (
+                "Here is the web search result: \n\n<search>\n\n"
+                + search_text
+                + "\n\n</search>\n\n"
+            )
+            prompt = web_content + prompt
+            has_context = True
+        except Exception as e:
+            st.error(f"Web search failed: {e}. Proceeding without web context.")
+            # If web search fails, we continue with just the prompt and no context
+            has_context = False
     elif web_local_rag == "RAG":
-        prompt, _ = rag_search(prompt)
-        has_context = True
+        prompt, rag_context_info = rag_search(prompt)
+        if "Error retrieving RAG context" in rag_context_info or "No relevant documents found" in rag_context_info:
+            st.warning(rag_context_info) # Display the warning/error to the user
+            has_context = False # No RAG context available due to error/no docs
+        else:
+            has_context = True # RAG context successfully added
         
     return prompt, has_context
 
@@ -583,35 +678,37 @@ def main() -> None:
     # Add a button to start a new chat
     st.sidebar.button("New Chat", on_click=new_chat, type="primary")
 
-    model_kwargs, system_prompt, web_local, debug_mode = render_sidebar()
+    model_kwargs, system_prompt, web_local, debug_mode = render_sidebar() # Now render_sidebar handles its own file uploader/indexing
+
     chat_model = ChatModel(st.session_state["model_name"], model_kwargs)
     runnable_with_messagehistory = init_runnablewithmessagehistory(
         system_prompt, chat_model
     )
 
-    # Image uploader
-    if "file_uploader_key" not in st.session_state:
-        st.session_state["file_uploader_key"] = 0
+    # This file uploader is for chat context (e.g., multimodal models), NOT for RAG indexing
+    if "chat_file_uploader_key" not in st.session_state:
+        st.session_state["chat_file_uploader_key"] = 0 # Initialize a key for the chat file uploader
 
     model_config = config["models"][st.session_state["model_name"]]
-    image_upload_disabled = (
+    # Disable chat file uploader if model is text-only
+    chat_file_upload_disabled = (
         True if model_config.get("input_format") == "text" else False
     )
-    uploaded_files = st.file_uploader(
-        "Choose a file",
-        type=["jpg", "jpeg", "png", "txt", "pdf", "csv", "py"],
+    uploaded_chat_files = st.file_uploader( # Renamed to avoid confusion with indexing files
+        "Choose a file for chat context (e.g., images for multimodal models)",
+        type=["jpg", "jpeg", "png", "txt", "pdf", "csv", "py"], # Keep file types you support for chat context
         accept_multiple_files=True,
-        key=st.session_state["file_uploader_key"],
-        disabled=image_upload_disabled,
+        key=st.session_state["chat_file_uploader_key"], # Use the new key
+        disabled=chat_file_upload_disabled,
     )
 
-    # Display chat messages
-    display_chat_messages(uploaded_files, debug_mode)
+    # Display chat messages (this function should be aware of the chat_files)
+    display_chat_messages(uploaded_chat_files, debug_mode)
 
     # User-provided prompt
     prompt = st.chat_input()
 
-    # Get images from previous messages
+    # Get images from previous messages for display logic (if any)
     message_images_list = [
         image_id
         for message in st.session_state.messages
@@ -619,34 +716,73 @@ def main() -> None:
         for image_id in message["images"]
     ]
 
+    # Process uploaded chat files for context (if any)
+    chat_content_files = []
+    if uploaded_chat_files:
+        # Process and display uploaded chat files (images/text for multimodal models)
+        chat_uploaded_file_ids = [] # To track unique uploaded files for chat messages
+        chat_content_files = display_uploaded_files_for_chat(uploaded_chat_files, message_images_list, chat_uploaded_file_ids)
+
+
     # Process the user prompt
     if prompt:
         # Store the original user prompt
         original_prompt = prompt
         
-        # Enhance prompt with RAG/Web search if needed
-        formatted_prompt, has_context = web_or_local(prompt, web_local)
+        # Prepare content for the model: text input + any files
+        model_input_content = []
+        if chat_content_files: # If there are uploaded files for chat context
+            model_input_content.extend(chat_content_files) # Add file content first
+        model_input_content.append({"type": "text", "text": original_prompt})
+
+
+        # If `web_local` is RAG or Web, `formatted_prompt` will contain the RAG/Web context
+        # and `original_prompt` will be appended.
+        formatted_prompt, has_context = web_or_local(original_prompt, web_local)
+        
+        # Check if the model_input_content needs to be updated with RAG/Web context
+        # This is important if you want to send the RAG content directly to the LLM
+        if has_context and web_local in ["RAG", "Web"]:
+            # Replace the plain text prompt with the formatted_prompt (which includes context)
+            # Find the text part in model_input_content and update it
+            for item in model_input_content:
+                if item.get("type") == "text" and item.get("text") == original_prompt:
+                    item["text"] = formatted_prompt
+                    break
+            else: # If original_prompt text was not found, add the formatted_prompt as new text content
+                model_input_content.append({"type": "text", "text": formatted_prompt})
         
         # Store and display user message with both original and enhanced versions
-        store_message("user", formatted_prompt, user_prompt=original_prompt, has_context=has_context)
+        store_message("user", formatted_prompt, user_prompt=original_prompt, has_context=has_context, images=chat_uploaded_file_ids if chat_uploaded_file_ids else None)
         
         with st.chat_message("user"):
             # Create a temporary message dict for display
             temp_message = {
                 "content": formatted_prompt,
                 "user_prompt": original_prompt,
-                "has_context": has_context
+                "has_context": has_context,
+                "images": chat_uploaded_file_ids if chat_uploaded_file_ids else None
             }
             display_user_message(temp_message, debug_mode)
+            # If chat files were uploaded, display them here as part of the user message
+            if chat_uploaded_file_ids:
+                display_images(chat_uploaded_file_ids, uploaded_chat_files)
+
 
         # Generate and display assistant response
         with st.chat_message("assistant"):
+            # Pass the complete content list for multimodal models
             response = generate_response(
                 runnable_with_messagehistory,
-                formatted_prompt
+                model_input_content # Use the list of content for multimodal models
             )
             # Store the assistant message (content is already captured in state during streaming)
             store_message("assistant", response)
+
+        # Clear uploaded chat files after processing
+        if uploaded_chat_files:
+            st.session_state["chat_file_uploader_key"] = random.randint(100001, 200000) # Reset the key to clear the uploader
+            st.rerun() # Rerun to clear the uploader widget
 
 
 if __name__ == "__main__":
