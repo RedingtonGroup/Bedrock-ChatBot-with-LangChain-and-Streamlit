@@ -2,6 +2,7 @@ import base64
 import random
 from io import BytesIO
 from typing import List, Tuple, Union
+import streamlit.components.v1 as components
 
 import streamlit as st
 from langchain_community.chat_message_histories import StreamlitChatMessageHistory
@@ -12,6 +13,16 @@ from langchain.chains import ConversationChain
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.prompts.chat import ChatPromptTemplate, MessagesPlaceholder
 from PIL import Image
+
+
+def render_copy_button(text: str):
+    components.html(f"""
+        <textarea id="copyTarget" style="position:absolute; left:-1000px; top:-1000px">{text}</textarea>
+        <button onclick="navigator.clipboard.writeText(document.getElementById('copyTarget').value)">📋 Copy to Clipboard</button>
+    """, height=30)
+
+
+
 
 CLAUDE_PROMPT = ChatPromptTemplate.from_messages(
     [
