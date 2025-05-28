@@ -1,5 +1,5 @@
 models:
-  Claude_4_Sonnet:
+  Claude 4 Sonnet:
     model_id: "anthropic.claude-sonnet-4-20250514-v1:0"
     input_format: "multimodal"
     thinking: 1
