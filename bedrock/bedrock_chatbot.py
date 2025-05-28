@@ -34,8 +34,8 @@ def set_page_config() -> None:
     """
     Set the Streamlit page configuration.
     """
-    st.set_page_config(page_title="🤖 Chat with Redington AI", layout="wide")
-    st.title("🤖 Chat with Redington AI")
+    st.set_page_config(page_title="🤖 Chat with Redington AI Bot", layout="wide")
+    st.title("🤖 Chat with Redington AI Bot")
 
 
 def render_sidebar() -> Tuple[Dict, int, str]:
