@@ -41,36 +41,24 @@
 
 
 ### S3 as a Document store
-import boto3
-import os
-from langchain_community.document_loaders import UnstructuredWordDocumentLoader
+from langchain_community.document_loaders.s3_directory import S3DirectoryLoader
 from langchain_community.vectorstores import FAISS
-from langchain_aws.embeddings import BedrockEmbeddings
+from langchain_aws import BedrockEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-def load_docx_from_s3(bucket_name, prefix=""):
-    s3 = boto3.client("s3")
-    response = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
-    documents = []
-    for obj in response.get("Contents", []):
-        key = obj["Key"]
-        if key.endswith(".docx"):
-            local_path = f"/tmp/{os.path.basename(key)}"
-            s3.download_file(bucket_name, key, local_path)
-            loader = UnstructuredWordDocumentLoader(local_path)
-            documents.extend(loader.load())
-            os.remove(local_path)  # Clean up
-    return documents
-
 def index_s3_directory(bucket_name, prefix="", chunk_size=500):
-    # Create Bedrock embeddings with explicit region specification
-    embeddings = BedrockEmbeddings(
-        model_id="amazon.titan-embed-text-v2:0",
-        region_name="us-east-1"
+    # Initialize Bedrock embeddings
+    embeddings = BedrockEmbeddings(model_id="amazon.titan-embed-text-v2:0")
+
+    # Load documents from S3
+    loader = S3DirectoryLoader(
+        bucket=bucket_name,
+        prefix=prefix,
+        aws_profile=None  # or set if using named profile
     )
-    
-    documents = load_docx_from_s3(bucket_name, prefix)
-    
+    documents = loader.load()
+
+    # Split documents
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=50,
@@ -78,8 +66,11 @@ def index_s3_directory(bucket_name, prefix="", chunk_size=500):
         separators=["\n\n", "\n", " ", ""]
     )
     docs = text_splitter.split_documents(documents)
+
+    # Create and save FAISS vectorstore
     vectorstore = FAISS.from_documents(docs, embeddings)
     vectorstore.save_local("faiss_index")
+
     return vectorstore
 
 # -------- Entry Point --------
