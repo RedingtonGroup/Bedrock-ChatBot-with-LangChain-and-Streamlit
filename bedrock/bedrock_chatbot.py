@@ -36,8 +36,8 @@ def set_page_config() -> None:
     """
     Set the Streamlit page configuration.
     """
-    st.set_page_config(page_title="🤖 Chat with Redington AI", layout="wide")
-    st.title("🤖 Chat with Redington AI")
+    st.set_page_config(page_title="🤖 Chat with Redington AI Bot", layout="wide")
+    st.title("🤖 Chat with Redington AI Bot")
 
 
 def render_sidebar() -> Tuple[Dict, int, str]:
@@ -76,19 +76,12 @@ def render_sidebar() -> Tuple[Dict, int, str]:
             key=f"{st.session_state['widget_key']}_Options",
         )
 
-        # Add debug mode toggles
+        # Add debug mode toggle
         debug_mode = st.checkbox(
-            "Debug Mode (Show RAG Context in User Messages)",
+            "Debug Mode (Show RAG Context)",
             value=False,
             key=f"{st.session_state['widget_key']}_Debug_Mode",
-            help="Enable to see RAG search results in user messages"
-        )
-        
-        show_rag_in_response = st.checkbox(
-            "Show RAG Context in Assistant Response",
-            value=False,
-            key=f"{st.session_state['widget_key']}_Show_RAG_Response",
-            help="Enable to see RAG context mentioned in assistant responses"
+            help="Enable to see RAG search results and backend processing"
         )
 
         with st.container():
@@ -138,7 +131,7 @@ def render_sidebar() -> Tuple[Dict, int, str]:
         "max_tokens": max_tokens,
     }
 
-    return model_kwargs, system_prompt, web_local, debug_mode, show_rag_in_response
+    return model_kwargs, system_prompt, web_local, debug_mode
 
 
 def extract_reasoning_and_text(input: Any) -> str:
@@ -337,8 +330,7 @@ def new_chat() -> None:
 
 def display_chat_messages(
     uploaded_files: List[st.runtime.uploaded_file_manager.UploadedFile],
-    debug_mode: bool = False,
-    show_rag_in_response: bool = False
+    debug_mode: bool = False
 ) -> None:
     """
     Display chat messages and uploaded images in the Streamlit app.
@@ -352,7 +344,7 @@ def display_chat_messages(
                 display_user_message(message, debug_mode)
 
             if message["role"] == "assistant":
-                display_assistant_message(message["content"], show_rag_in_response)
+                display_assistant_message(message["content"])
 
 
 def display_images(
@@ -431,23 +423,14 @@ def display_user_message(message: dict, debug_mode: bool = False) -> None:
                 st.markdown(message_content[0]["text"])
 
 
-def display_assistant_message(message_content: Union[str, dict], show_rag_in_response: bool = False) -> None:
+def display_assistant_message(message_content: Union[str, dict]) -> None:
     """
     Display assistant message in the chat message.
-    Optionally filters out RAG context references.
     """
     if isinstance(message_content, str):
-        content = message_content
+        st.markdown(message_content)
     elif "response" in message_content:
-        content = message_content["response"]
-    else:
-        content = str(message_content)
-    
-    if not show_rag_in_response:
-        # Clean the response to remove RAG context references
-        content = clean_assistant_response(content)
-    
-    st.markdown(content)
+        st.markdown(message_content["response"])
 
 
 def display_uploaded_files(
@@ -515,35 +498,6 @@ def display_uploaded_files(
                     pdf_file.close()
 
     return content_files
-
-
-def clean_assistant_response(content: str) -> str:
-    """
-    Clean assistant response by removing RAG context references and technical details.
-    """
-    # Remove common RAG context references
-    patterns_to_remove = [
-        r"I notice that the RAG search results provided contain.*?\.",
-        r"The user is asking for.*?RAG search results.*?\.",
-        r"Based on the search results.*?don't provide details about.*?\.",
-        r"Since the search results don't provide.*?\.",
-        r"From the search results.*?\.",
-        r"The search results.*?\.",
-        r"Based on the provided context.*?\.",
-        r"According to the search results.*?\.",
-        r"I notice.*?search results.*?\.",
-        r"The RAG.*?results.*?\.",
-    ]
-    
-    cleaned_content = content
-    for pattern in patterns_to_remove:
-        cleaned_content = re.sub(pattern, "", cleaned_content, flags=re.IGNORECASE | re.DOTALL)
-    
-    # Remove multiple newlines and clean up formatting
-    cleaned_content = re.sub(r'\n\s*\n\s*\n+', '\n\n', cleaned_content)
-    cleaned_content = cleaned_content.strip()
-    
-    return cleaned_content
 
 
 def rag_search(prompt: str) -> tuple[str, str]:
@@ -629,7 +583,7 @@ def main() -> None:
     # Add a button to start a new chat
     st.sidebar.button("New Chat", on_click=new_chat, type="primary")
 
-    model_kwargs, system_prompt, web_local, debug_mode, show_rag_in_response = render_sidebar()
+    model_kwargs, system_prompt, web_local, debug_mode = render_sidebar()
     chat_model = ChatModel(st.session_state["model_name"], model_kwargs)
     runnable_with_messagehistory = init_runnablewithmessagehistory(
         system_prompt, chat_model
@@ -652,7 +606,7 @@ def main() -> None:
     )
 
     # Display chat messages
-    display_chat_messages(uploaded_files, debug_mode, show_rag_in_response)
+    display_chat_messages(uploaded_files, debug_mode)
 
     # User-provided prompt
     prompt = st.chat_input()
