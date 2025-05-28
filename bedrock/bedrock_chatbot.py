@@ -26,9 +26,7 @@ load_dotenv()
 INIT_MESSAGE = {
     "role": "assistant",
     "content": "Hi there! I'm the Redington AI Bot, built to support you. How may I assist you today?",
-    "llm_content": "Hi there! I'm the Redington AI Bot, built to support you. How may I assist you today?",
-    "user_prompt": "",  # For storing clean user prompts
-    "has_context": False  # Flag to indicate if message has RAG/search context
+    "llm_content": "Hi there! I'm the Redington AI Bot, built to support you. How may I assist you today?"
 }
 
 
@@ -74,14 +72,6 @@ def render_sidebar() -> Tuple[Dict, int, str]:
             "Options",
             ("RAG", "Local"),
             key=f"{st.session_state['widget_key']}_Options",
-        )
-
-        # Add debug mode toggle
-        debug_mode = st.checkbox(
-            "Debug Mode (Show RAG Context)",
-            value=False,
-            key=f"{st.session_state['widget_key']}_Debug_Mode",
-            help="Enable to see RAG search results and backend processing"
         )
 
         with st.container():
@@ -131,7 +121,7 @@ def render_sidebar() -> Tuple[Dict, int, str]:
         "max_tokens": max_tokens,
     }
 
-    return model_kwargs, system_prompt, web_local, debug_mode
+    return model_kwargs, system_prompt, web_local
 
 
 def extract_reasoning_and_text(input: Any) -> str:
@@ -189,18 +179,16 @@ def extract_reasoning_and_text(input: Any) -> str:
     st.session_state["current_display_text"] = display_text
 
 
-def store_message(role: str, content: str, user_prompt: str = "", has_context: bool = False, images: List[str] = None) -> None:
+def store_message(role: str, content: str, images: List[str] = None) -> None:
     """
     Store a message in the session state for display purposes.
     
     Args:
         role: The role of the message sender ('user' or 'assistant')
-        content: The message content (may include RAG context for backend)
-        user_prompt: The clean user prompt (what user actually typed)
-        has_context: Whether the message includes RAG/search context
+        content: The message content
         images: Optional list of image IDs
     """
-    message = {"role": role, "has_context": has_context}
+    message = {"role": role}
     
     if role == "assistant" and "current_display_text" in st.session_state:
         # For assistant responses
@@ -212,7 +200,6 @@ def store_message(role: str, content: str, user_prompt: str = "", has_context: b
         # For user messages, clean any thinking blocks to be safe
         if role == "user":
             message["llm_content"] = re.sub(r'```thinking.*?```', '', content, flags=re.DOTALL)
-            message["user_prompt"] = user_prompt  # Store the clean user prompt
         else:
             message["llm_content"] = content
         
@@ -281,7 +268,7 @@ def generate_response(
             continue
             
         if msg["role"] == "user":
-            # Use the original content (with RAG context) for LLM processing
+            # Keep user messages as they are
             msgs.add_user_message(msg["content"])
         elif msg["role"] == "assistant":
             # Remove thinking blocks from assistant messages
@@ -330,7 +317,6 @@ def new_chat() -> None:
 
 def display_chat_messages(
     uploaded_files: List[st.runtime.uploaded_file_manager.UploadedFile],
-    debug_mode: bool = False
 ) -> None:
     """
     Display chat messages and uploaded images in the Streamlit app.
@@ -341,7 +327,7 @@ def display_chat_messages(
                 display_images(message["images"], uploaded_files)
 
             if message["role"] == "user":
-                display_user_message(message, debug_mode)
+                display_user_message(message["content"])
 
             if message["role"] == "assistant":
                 display_assistant_message(message["content"])
@@ -383,44 +369,19 @@ def display_images(
                     st.write(f"📑 Uploaded PDF file: {uploaded_file.name}")
 
 
-def display_user_message(message: dict, debug_mode: bool = False) -> None:
+def display_user_message(message_content: Union[str, List[dict]]) -> None:
     """
     Display user message in the chat message.
-    Shows clean user prompt by default, full content in debug mode.
     """
-    if debug_mode and message.get("has_context", False):
-        # In debug mode, show both the clean prompt and the RAG context
-        user_prompt = message.get("user_prompt", "")
-        if user_prompt:
-            st.markdown("**Your Question:**")
-            st.markdown(user_prompt)
-            
-            # Show RAG context in an expander
-            with st.expander("🔍 RAG Context (Debug)", expanded=False):
-                # Extract and display the RAG context
-                full_content = message["content"]
-                if "<search>" in full_content and "</search>" in full_content:
-                    rag_content = full_content.split("<search>")[1].split("</search>")[0]
-                    st.markdown("**Retrieved Context:**")
-                    st.text(rag_content.strip())
+    if isinstance(message_content, str):
+        message_text = message_content
+    elif isinstance(message_content, dict):
+        message_text = message_content["input"][0]["content"][0]["text"]
     else:
-        # Production mode: show only the clean user prompt
-        user_prompt = message.get("user_prompt", "")
-        if user_prompt:
-            st.markdown(user_prompt)
-        else:
-            # Fallback to parsing content if user_prompt is not available
-            message_content = message["content"]
-            if isinstance(message_content, str):
-                # Remove RAG context from display
-                clean_content = message_content.split("</search>\n\n", 1)[-1]
-                st.markdown(clean_content)
-            elif isinstance(message_content, dict):
-                message_text = message_content["input"][0]["content"][0]["text"]
-                clean_content = message_text.split("</search>\n\n", 1)[-1]
-                st.markdown(clean_content)
-            else:
-                st.markdown(message_content[0]["text"])
+        message_text = message_content[0]["text"]
+
+    message_content_markdown = message_text.split("</context>\n\n", 1)[-1]
+    st.markdown(message_content_markdown)
 
 
 def display_assistant_message(message_content: Union[str, dict]) -> None:
@@ -500,19 +461,12 @@ def display_uploaded_files(
     return content_files
 
 
-def rag_search(prompt: str) -> tuple[str, str]:
-    """
-    Perform RAG search and return both the enhanced prompt and RAG context.
-    
-    Returns:
-        tuple: (enhanced_prompt_with_context, rag_context_only)
-    """
+def rag_search(prompt: str) -> str:
     # Perform the search using the search_index function from bedrock_embedder.py
     docs = search_index(prompt, "faiss_index")
     # Check if an error message was returned
     if isinstance(docs[0], str):
-        return prompt, "Error retrieving RAG context"
-    
+        return docs[0]
     # Initialize Bedrock embeddings
     embeddings = BedrockEmbeddings(model_id="amazon.titan-embed-text-v2:0")
 
@@ -530,29 +484,16 @@ def rag_search(prompt: str) -> tuple[str, str]:
     # Perform the search
     docs = db.similarity_search(prompt)
 
-    # Format the RAG context
-    rag_context = "\n\n".join(doc.page_content for doc in docs)
-    
-    # Format the enhanced prompt
+    # Format the results
     rag_content = (
         "Here are the RAG search results: \n\n<search>\n\n"
-        + rag_context
+        + "\n\n".join(doc.page_content for doc in docs)
         + "\n\n</search>\n\n"
     )
-    enhanced_prompt = rag_content + prompt
-    
-    return enhanced_prompt, rag_context
+    return rag_content + prompt
 
 
-def web_or_local(prompt: str, web_local_rag: str) -> tuple[str, bool]:
-    """
-    Process prompt with web search or RAG, return enhanced prompt and context flag.
-    
-    Returns:
-        tuple: (enhanced_prompt, has_context)
-    """
-    has_context = False
-    
+def web_or_local(prompt: str, web_local_rag: str) -> str:
     if web_local_rag == "Web":
         search = SerpAPIWrapper()
         search_text = search.run(prompt)
@@ -562,12 +503,9 @@ def web_or_local(prompt: str, web_local_rag: str) -> tuple[str, bool]:
             + "\n\n</search>\n\n"
         )
         prompt = web_content + prompt
-        has_context = True
     elif web_local_rag == "RAG":
-        prompt, _ = rag_search(prompt)
-        has_context = True
-        
-    return prompt, has_context
+        prompt = rag_search(prompt)
+    return prompt
 
 
 def main() -> None:
@@ -583,7 +521,7 @@ def main() -> None:
     # Add a button to start a new chat
     st.sidebar.button("New Chat", on_click=new_chat, type="primary")
 
-    model_kwargs, system_prompt, web_local, debug_mode = render_sidebar()
+    model_kwargs, system_prompt, web_local = render_sidebar()
     chat_model = ChatModel(st.session_state["model_name"], model_kwargs)
     runnable_with_messagehistory = init_runnablewithmessagehistory(
         system_prompt, chat_model
@@ -606,7 +544,7 @@ def main() -> None:
     )
 
     # Display chat messages
-    display_chat_messages(uploaded_files, debug_mode)
+    display_chat_messages(uploaded_files)
 
     # User-provided prompt
     prompt = st.chat_input()
@@ -621,23 +559,12 @@ def main() -> None:
 
     # Process the user prompt
     if prompt:
-        # Store the original user prompt
-        original_prompt = prompt
+        formatted_prompt = web_or_local(prompt, web_local)
         
-        # Enhance prompt with RAG/Web search if needed
-        formatted_prompt, has_context = web_or_local(prompt, web_local)
-        
-        # Store and display user message with both original and enhanced versions
-        store_message("user", formatted_prompt, user_prompt=original_prompt, has_context=has_context)
-        
+        # Store and display user message
+        store_message("user", formatted_prompt)
         with st.chat_message("user"):
-            # Create a temporary message dict for display
-            temp_message = {
-                "content": formatted_prompt,
-                "user_prompt": original_prompt,
-                "has_context": has_context
-            }
-            display_user_message(temp_message, debug_mode)
+            st.markdown(formatted_prompt)
 
         # Generate and display assistant response
         with st.chat_message("assistant"):
