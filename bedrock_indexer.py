@@ -1,6 +1,7 @@
 from langchain_community.document_loaders import DirectoryLoader
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import BedrockEmbeddings
+# from langchain_community.embeddings import BedrockEmbeddings
+from langchain_aws import BedrockEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 def index_directory(directory_path, glob_pattern="**/[!.]*", chunk_size=500):
