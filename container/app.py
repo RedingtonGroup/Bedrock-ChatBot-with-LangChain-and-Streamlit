@@ -22,7 +22,7 @@ CLAUDE_PROMPT = ChatPromptTemplate.from_messages(
 
 INIT_MESSAGE = {
     "role": "assistant",
-    "content": "Hi! I'm your AI Bot on Bedrock. How may I help you?",
+    "content": "Hi there! I'm the Redington AI Bot, built to support you. How may I assist you today?",
 }
 
 class StreamHandler(BaseCallbackHandler):
