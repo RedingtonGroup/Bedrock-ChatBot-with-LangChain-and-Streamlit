@@ -589,41 +589,35 @@ def main() -> None:
         system_prompt, chat_model
     )
 
-    # # Image uploader
-    # if "file_uploader_key" not in st.session_state:
-    #     st.session_state["file_uploader_key"] = 0
+    # Image uploader
+    if "file_uploader_key" not in st.session_state:
+        st.session_state["file_uploader_key"] = 0
 
-    # model_config = config["models"][st.session_state["model_name"]]
-    # image_upload_disabled = (
-    #     True if model_config.get("input_format") == "text" else False
-    # )
-    # uploaded_files = st.file_uploader(
-    #     "Choose a file",
-    #     type=["jpg", "jpeg", "png", "txt", "pdf", "csv", "py"],
-    #     accept_multiple_files=True,
-    #     key=st.session_state["file_uploader_key"],
-    #     disabled=image_upload_disabled,
-    # )
+    model_config = config["models"][st.session_state["model_name"]]
+    image_upload_disabled = (
+        True if model_config.get("input_format") == "text" else False
+    )
+    uploaded_files = st.file_uploader(
+        "Choose a file",
+        type=["jpg", "jpeg", "png", "txt", "pdf", "csv", "py"],
+        accept_multiple_files=True,
+        key=st.session_state["file_uploader_key"],
+        disabled=image_upload_disabled,
+    )
 
-    # # Display chat messages
-    # display_chat_messages(uploaded_files, debug_mode)
-
-    # # User-provided prompt
-    # prompt = st.chat_input()
-
-    # Display chat messages - no uploaded files to pass
-    display_chat_messages(debug_mode=debug_mode)
+    # Display chat messages
+    display_chat_messages(uploaded_files, debug_mode)
 
     # User-provided prompt
     prompt = st.chat_input()
 
-    # # Get images from previous messages
-    # message_images_list = [
-    #     image_id
-    #     for message in st.session_state.messages
-    #     if message["role"] == "user" and "images" in message and message["images"]
-    #     for image_id in message["images"]
-    # ]
+    # Get images from previous messages
+    message_images_list = [
+        image_id
+        for message in st.session_state.messages
+        if message["role"] == "user" and "images" in message and message["images"]
+        for image_id in message["images"]
+    ]
 
     # Process the user prompt
     if prompt:
