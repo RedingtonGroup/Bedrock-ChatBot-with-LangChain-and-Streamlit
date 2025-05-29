@@ -28,6 +28,7 @@ load_dotenv()
 # In a real application, you would use a database (like Firebase, PostgreSQL, etc.)
 # for persistent user storage.
 REGISTERED_USERS = {
+    "test@example.com": "password123", # Added for consistency with app.py
     "admin@redaibot.com": "adminpass"
 }
 
@@ -36,8 +37,10 @@ INIT_MESSAGE = {
     "content": "Hi there! I'm the Redington AI Bot, built to support you. How may I assist you today?",
     "llm_content": "Hi there! I'm the Redington AI Bot, built to support you. How may I assist you today?",
     "user_prompt": "",
-    "has_context": False
+    "has_context": False,
+    "token_count": 0 # Initialize token count for initial message
 }
+
 
 def set_page_config() -> None:
     """
@@ -73,7 +76,7 @@ def login_user(email, password):
         st.session_state.logged_in = True
         st.session_state.user_id = email # Use email as user_id for simplicity
         st.success(f"Logged in as {email}")
-        st.rerun() # Rerun to update UI after login
+        new_chat() # Reset chat history for the new session after login
     else:
         st.error("Invalid email or password.")
 
@@ -118,7 +121,7 @@ def render_sidebar_auth_and_params() -> Tuple[Dict, str, str, bool]:
             with col2:
                 if st.button("Sign Up", use_container_width=True):
                     register_user(email, password)
-            st.info("For this demo, use 'admin@redaibot.com' and 'adminpass' to log in.")
+            st.info("For this demo, use 'test@example.com' and 'password123' or 'admin@redaibot.com' and 'adminpass' to log in.")
             # If not logged in, we return default empty values for model params,
             # as the main chat UI won't be rendered.
             return {}, "", "Local", False
@@ -232,7 +235,7 @@ def extract_reasoning_and_text(input: Any) -> str:
         content = chunk.content if hasattr(chunk, "content") else chunk
         if isinstance(content, list):
             for item in content:
-                if item.get("type") == "reasoning_content":
+                if item.get("type") == "reasoning_content"):
                     reasoning_text = item.get("reasoning_content", {}).get("text", "")
                     if reasoning_text:
                         if not in_reasoning_block:
@@ -266,7 +269,7 @@ def extract_reasoning_and_text(input: Any) -> str:
     st.session_state["current_display_text"] = display_text
 
 
-def store_message(role: str, content: str, user_prompt: str = "", has_context: bool = False, images: List[str] = None) -> None:
+def store_message(role: str, content: str, user_prompt: str = "", has_context: bool = False, images: List[str] = None, token_count: int = 0) -> None:
     """
     Store a message in the session state for display purposes.
     (No Firestore saving in this simplified version)
@@ -277,6 +280,7 @@ def store_message(role: str, content: str, user_prompt: str = "", has_context: b
         message["content"] = st.session_state["current_display_text"]
         if "current_llm_text" in st.session_state:
             message["llm_content"] = st.session_state["current_llm_text"]
+        message["token_count"] = token_count # Store token count for assistant messages
     else:
         message["content"] = content
         if role == "user":
@@ -378,6 +382,9 @@ def display_chat_messages(
 
             if message["role"] == "assistant":
                 display_assistant_message(message["content"])
+                # Display token count if available
+                if "token_count" in message and message["token_count"] > 0:
+                    st.caption(f"Tokens used: {message['token_count']}")
 
 
 def display_images(
@@ -545,7 +552,9 @@ def rag_search(prompt: str) -> tuple[str, str]:
     index_directory = "faiss_index"
     allow_dangerous = True
 
-    db = FAISS.load_local( # This 'db' variable is now undefined, as Firebase was removed.
+    # Note: The 'db' variable here was previously tied to Firebase in a different context.
+    # Ensure your FAISS index loading is independent of Firebase if you use RAG.
+    db = FAISS.load_local(
         index_directory, embeddings, allow_dangerous_deserialization=allow_dangerous
     )
 
@@ -654,11 +663,14 @@ def main() -> None:
         store_message("user", formatted_prompt, user_prompt=original_prompt, has_context=has_context)
         
         with st.chat_message("assistant"):
-            response = generate_response(
+            response_text = generate_response(
                 runnable_with_messagehistory,
                 formatted_prompt
             )
-            store_message("assistant", response)
+            # Calculate token count for the generated response
+            # Using a simple word count as a proxy for tokens
+            token_count = len(response_text.split()) 
+            store_message("assistant", response_text, token_count=token_count)
 
 
 if __name__ == "__main__":
