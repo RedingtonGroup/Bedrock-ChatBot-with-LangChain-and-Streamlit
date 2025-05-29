@@ -399,209 +399,74 @@ def display_chat_messages(
 def display_images(
     image_ids: List[str],
     uploaded_files: List[st.runtime.uploaded_file_manager.UploadedFile],
-) -> List[Union[dict, str]]:
+) -> None:
     """
-    Display uploaded images and return a list of image dictionaries for the prompt.
-    Also handle txt and pdf files.
+    Display uploaded images in the chat message.
     """
     num_cols = 10
     cols = st.columns(num_cols)
     i = 0
-    content_files = []
 
-    for uploaded_file in uploaded_files:
-        if uploaded_file.file_id not in image_ids: # Changed from message_images_list to image_ids
-            image_ids.append(uploaded_file.file_id) # Add to the list passed in
-            try:
-                img = Image.open(uploaded_file)
-                with BytesIO() as output_buffer:
-                    img.save(output_buffer, format=img.format)
-                    content_image = output_buffer.getvalue()
+    for image_id in image_ids:
+        for uploaded_file in uploaded_files:
+            if image_id == uploaded_file.file_id:
+                if uploaded_file.type.startswith("image/"):
+                    img = Image.open(uploaded_file)
 
-                content_files.append(
-                    {
-                        "image": {
-                            "format": img.format.lower(),
-                            "source": {"bytes": content_image},
-                        }
-                    }
-                )
-                with cols[i]:
-                    st.image(img, caption="", width=75)
-                    i += 1
-                if i >= num_cols:
-                    i = 0
-            except UnidentifiedImageError:
-                if uploaded_file.type in [
+                    with cols[i]:
+                        st.image(img, caption="", width=75)
+                        i += 1
+
+                    if i >= num_cols:
+                        i = 0
+                elif uploaded_file.type in [
                     "text/plain",
                     "text/csv",
                     "text/x-python-script",
                 ]:
-                    uploaded_file.seek(0)
-                    lines = uploaded_file.readlines()
-                    text = "".join(line.decode() for line in lines)
-                    content_files.append({"type": "text", "text": text})
                     if uploaded_file.type == "text/x-python-script":
                         st.write(f"🐍 Uploaded Python file: {uploaded_file.name}")
                     else:
                         st.write(f"📄 Uploaded text file: {uploaded_file.name}")
                 elif uploaded_file.type == "application/pdf":
-                    pdf_file = pdfplumber.open(uploaded_file)
-                    page_text = ""
-                    for page in pdf_file.pages:
-                        page_text += page.extract_text()
-                    content_files.append({"type": "text", "text": page_text})
+                    # This part needs to be updated to handle PDF content extraction.
+                    # For now, it will just write the file name.
                     st.write(f"📑 Uploaded PDF file: {uploaded_file.name}")
-                    pdf_file.close()
-
-    return content_files
-
-
-def display_user_message(message: dict, debug_mode: bool = False) -> None:
-    """
-    Display user message in the chat message.
-    Shows clean user prompt by default, full content in debug mode.
-    """
-    if debug_mode and message.get("has_context", False):
-        user_prompt = message.get("user_prompt", "")
-        if user_prompt:
-            st.markdown("**Your Question:**")
-            st.markdown(user_prompt)
-            
-            with st.expander("🔍 RAG Context (Debug)", expanded=False):
-                full_content = message["content"]
-                if "<search>" in full_content and "</search>" in full_content:
-                    rag_content = full_content.split("<search>")[1].split("</search>")[0]
-                    st.markdown("**Retrieved Context:**")
-                    st.text(rag_content.strip())
-    else:
-        user_prompt = message.get("user_prompt", "")
-        if user_prompt:
-            st.markdown(user_prompt)
-        else:
-            message_content = message["content"]
-            if isinstance(message_content, str):
-                clean_content = message_content.split("</search>\n\n", 1)[-1]
-                st.markdown(clean_content)
-            elif isinstance(message_content, dict):
-                # This part might need adjustment based on how your `formatted_input` is structured
-                # if it's a dict with 'input' key. For now, assuming it's a simple text message.
-                if "input" in message_content and isinstance(message_content["input"], list) and message_content["input"]:
-                    if isinstance(message_content["input"][0], dict) and "content" in message_content["input"][0] and isinstance(message_content["input"][0]["content"], list) and message_content["input"][0]["content"]:
-                        if isinstance(message_content["input"][0]["content"][0], dict) and "text" in message_content["input"][0]["content"][0]:
-                            message_text = message_content["input"][0]["content"][0]["text"]
-                            clean_content = message_text.split("</search>\n\n", 1)[-1]
-                            st.markdown(clean_content)
-                        else:
-                            st.markdown("Error: Unexpected message content structure.")
-                    else:
-                        st.markdown("Error: Unexpected message content structure.")
-                else:
-                    st.markdown("Error: Unexpected message content structure.")
-            else:
-                st.markdown(message_content[0]["text"])
-
-
-def display_assistant_message(message_content: Union[str, dict]) -> None:
-    """
-    Display assistant message in the chat message.
-    """
-    if isinstance(message_content, str):
-        st.markdown(message_content)
-    elif "response" in message_content:
-        st.markdown(message_content["response"])
-
-
-def display_uploaded_files(
-    uploaded_files: List[st.runtime.uploaded_file_manager.UploadedFile],
-    message_images_list: List[str],
-    uploaded_file_ids: List[str],
-) -> List[Union[dict, str]]:
-    """
-    Display uploaded images and return a list of image dictionaries for the prompt.
-    Also handle txt and pdf files.
-    """
-    num_cols = 10
-    cols = st.columns(num_cols)
-    i = 0
-    content_files = []
-
-    for uploaded_file in uploaded_files:
-        if uploaded_file.file_id not in message_images_list:
-            uploaded_file_ids.append(uploaded_file.file_id)
-            try:
-                img = Image.open(uploaded_file)
-                with BytesIO() as output_buffer:
-                    img.save(output_buffer, format=img.format)
-                    content_image = output_buffer.getvalue()
-
-                content_files.append(
-                    {
-                        "image": {
-                            "format": img.format.lower(),
-                            "source": {"bytes": content_image},
-                        }
-                    }
-                )
-                with cols[i]:
-                    st.image(img, caption="", width=75)
-                    i += 1
-                if i >= num_cols:
-                    i = 0
-            except UnidentifiedImageError:
-                if uploaded_file.type in [
-                    "text/plain",
-                    "text/csv",
-                    "text/x-python-script",
-                ]:
-                    uploaded_file.seek(0)
-                    lines = uploaded_file.readlines()
-                    text = "".join(line.decode() for line in lines)
-                    content_files.append({"type": "text", "text": text})
-                    if uploaded_file.type == "text/x-python-script":
-                        st.write(f"🐍 Uploaded Python file: {uploaded_file.name}")
-                    else:
-                        st.write(f"📄 Uploaded text file: {uploaded_file.name}")
-                elif uploaded_file.type == "application/pdf":
-                    pdf_file = pdfplumber.open(uploaded_file)
-                    page_text = ""
-                    for page in pdf_file.pages:
-                        page_text += page.extract_text()
-                    content_files.append({"type": "text", "text": page_text})
-                    st.write(f"📑 Uploaded PDF file: {uploaded_file.name}")
-                    pdf_file.close()
-
-    return content_files
 
 
 def rag_search(prompt: str) -> tuple[str, str]:
     """
     Perform RAG search and return both the enhanced prompt and RAG context.
     """
-    docs = search_index(prompt, "faiss_index")
-    if isinstance(docs[0], str):
+    # Ensure search_index is properly defined and returns a valid index or path
+    # If search_index is meant to load the FAISS index, it should return the loaded index.
+    # If it returns a path, FAISS.load_local should be called with that path.
+    
+    # Assuming search_index returns the path to the FAISS index
+    index_path = "faiss_index" # This should be where your FAISS index is saved
+
+    try:
+        embeddings = BedrockEmbeddings(model_id="amazon.titan-embed-text-v2:0")
+        # Load the FAISS index
+        db = FAISS.load_local(
+            index_path, embeddings, allow_dangerous_deserialization=True
+        )
+        
+        docs = db.similarity_search(prompt)
+
+        rag_context = "\n\n".join(doc.page_content for doc in docs)
+        
+        rag_content = (
+            "Here are the RAG search results: \n\n<search>\n\n"
+            + rag_context
+            + "\n\n</search>\n\n"
+        )
+        enhanced_prompt = rag_content + prompt
+        
+        return enhanced_prompt, rag_context
+    except Exception as e:
+        st.error(f"RAG Search Error: {e}. Ensure 'faiss_index' exists and 'bedrock_embedder.py' is correctly configured.")
         return prompt, "Error retrieving RAG context"
-    
-    embeddings = BedrockEmbeddings(model_id="amazon.titan-embed-text-v2:0")
-    index_directory = "faiss_index"
-    allow_dangerous = True
-
-    db = FAISS.load_local( # This 'db' variable is now undefined, as Firebase was removed.
-        index_directory, embeddings, allow_dangerous_deserialization=allow_dangerous
-    )
-
-    docs = db.similarity_search(prompt)
-
-    rag_context = "\n\n".join(doc.page_content for doc in docs)
-    
-    rag_content = (
-        "Here are the RAG search results: \n\n<search>\n\n"
-        + rag_context
-        + "\n\n</search>\n\n"
-    )
-    enhanced_prompt = rag_content + prompt
-    
-    return enhanced_prompt, rag_context
 
 
 def web_or_local(prompt: str, web_local_rag: str) -> tuple[str, bool]:
