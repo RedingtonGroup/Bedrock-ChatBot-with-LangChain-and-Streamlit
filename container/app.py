@@ -17,7 +17,7 @@ from PIL import Image
 # In a real application, you would use a database (like Firebase, PostgreSQL, etc.)
 # for persistent user storage and proper password hashing.
 REGISTERED_USERS = {
-    "test@example.com": "password123"
+    "admin@redaibot.com": "adminpass"
 }
 
 CLAUDE_PROMPT = ChatPromptTemplate.from_messages(
