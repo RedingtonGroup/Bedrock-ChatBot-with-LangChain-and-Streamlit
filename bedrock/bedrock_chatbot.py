@@ -28,7 +28,6 @@ load_dotenv()
 # In a real application, you would use a database (like Firebase, PostgreSQL, etc.)
 # for persistent user storage.
 REGISTERED_USERS = {
-    "test@example.com": "password123", # Added for consistency with app.py
     "admin@redaibot.com": "adminpass"
 }
 
@@ -37,10 +36,8 @@ INIT_MESSAGE = {
     "content": "Hi there! I'm the Redington AI Bot, built to support you. How may I assist you today?",
     "llm_content": "Hi there! I'm the Redington AI Bot, built to support you. How may I assist you today?",
     "user_prompt": "",
-    "has_context": False,
-    "token_count": 0 # Initialize token count for initial message
+    "has_context": False
 }
-
 
 def set_page_config() -> None:
     """
@@ -76,7 +73,7 @@ def login_user(email, password):
         st.session_state.logged_in = True
         st.session_state.user_id = email # Use email as user_id for simplicity
         st.success(f"Logged in as {email}")
-        new_chat() # Reset chat history for the new session after login
+        st.rerun() # Rerun to update UI after login
     else:
         st.error("Invalid email or password.")
 
@@ -121,7 +118,7 @@ def render_sidebar_auth_and_params() -> Tuple[Dict, str, str, bool]:
             with col2:
                 if st.button("Sign Up", use_container_width=True):
                     register_user(email, password)
-            st.info("For this demo, use 'test@example.com' and 'password123' or 'admin@redaibot.com' and 'adminpass' to log in.")
+            st.info("For this demo, use 'admin@redaibot.com' and 'adminpass' to log in.")
             # If not logged in, we return default empty values for model params,
             # as the main chat UI won't be rendered.
             return {}, "", "Local", False
@@ -235,8 +232,7 @@ def extract_reasoning_and_text(input: Any) -> str:
         content = chunk.content if hasattr(chunk, "content") else chunk
         if isinstance(content, list):
             for item in content:
-                # Corrected: Removed extra parenthesis here
-                if item.get("type") == "reasoning_content": 
+                if item.get("type") == "reasoning_content":
                     reasoning_text = item.get("reasoning_content", {}).get("text", "")
                     if reasoning_text:
                         if not in_reasoning_block:
@@ -270,7 +266,7 @@ def extract_reasoning_and_text(input: Any) -> str:
     st.session_state["current_display_text"] = display_text
 
 
-def store_message(role: str, content: str, user_prompt: str = "", has_context: bool = False, images: List[str] = None, token_count: int = 0) -> None:
+def store_message(role: str, content: str, user_prompt: str = "", has_context: bool = False, images: List[str] = None) -> None:
     """
     Store a message in the session state for display purposes.
     (No Firestore saving in this simplified version)
@@ -281,7 +277,6 @@ def store_message(role: str, content: str, user_prompt: str = "", has_context: b
         message["content"] = st.session_state["current_display_text"]
         if "current_llm_text" in st.session_state:
             message["llm_content"] = st.session_state["current_llm_text"]
-        message["token_count"] = token_count # Store token count for assistant messages
     else:
         message["content"] = content
         if role == "user":
@@ -383,9 +378,6 @@ def display_chat_messages(
 
             if message["role"] == "assistant":
                 display_assistant_message(message["content"])
-                # Display token count if available
-                if "token_count" in message and message["token_count"] > 0:
-                    st.caption(f"Tokens used: {message['token_count']}")
 
 
 def display_images(
@@ -421,6 +413,115 @@ def display_images(
                     else:
                         st.write(f"📄 Uploaded text file: {uploaded_file.name}")
                 elif uploaded_file.type == "application/pdf":
+                    st.write(f"📑 Uploaded PDF file: {uploaded_file.name}")
+
+
+def display_user_message(message: dict, debug_mode: bool = False) -> None:
+    """
+    Display user message in the chat message.
+    Shows clean user prompt by default, full content in debug mode.
+    """
+    if debug_mode and message.get("has_context", False):
+        user_prompt = message.get("user_prompt", "")
+        if user_prompt:
+            st.markdown("**Your Question:**")
+            st.markdown(user_prompt)
+            
+            with st.expander("🔍 RAG Context (Debug)", expanded=False):
+                full_content = message["content"]
+                if "<search>" in full_content and "</search>" in full_content:
+                    rag_content = full_content.split("<search>")[1].split("</search>")[0]
+                    st.markdown("**Retrieved Context:**")
+                    st.text(rag_content.strip())
+    else:
+        user_prompt = message.get("user_prompt", "")
+        if user_prompt:
+            st.markdown(user_prompt)
+        else:
+            message_content = message["content"]
+            if isinstance(message_content, str):
+                clean_content = message_content.split("</search>\n\n", 1)[-1]
+                st.markdown(clean_content)
+            elif isinstance(message_content, dict):
+                # This part might need adjustment based on how your `formatted_input` is structured
+                # if it's a dict with 'input' key. For now, assuming it's a simple text message.
+                if "input" in message_content and isinstance(message_content["input"], list) and message_content["input"]:
+                    if isinstance(message_content["input"][0], dict) and "content" in message_content["input"][0] and isinstance(message_content["input"][0]["content"], list) and message_content["input"][0]["content"]:
+                        if isinstance(message_content["input"][0]["content"][0], dict) and "text" in message_content["input"][0]["content"][0]:
+                            message_text = message_content["input"][0]["content"][0]["text"]
+                            clean_content = message_text.split("</search>\n\n", 1)[-1]
+                            st.markdown(clean_content)
+                        else:
+                            st.markdown("Error: Unexpected message content structure.")
+                    else:
+                        st.markdown("Error: Unexpected message content structure.")
+                else:
+                    st.markdown("Error: Unexpected message content structure.")
+            else:
+                st.markdown(message_content[0]["text"])
+
+
+def display_assistant_message(message_content: Union[str, dict]) -> None:
+    """
+    Display assistant message in the chat message.
+    """
+    if isinstance(message_content, str):
+        st.markdown(message_content)
+    elif "response" in message_content:
+        st.markdown(message_content["response"])
+
+
+def display_uploaded_files(
+    uploaded_files: List[st.runtime.uploaded_file_manager.UploadedFile],
+    message_images_list: List[str],
+    uploaded_file_ids: List[str],
+) -> List[Union[dict, str]]:
+    """
+    Display uploaded images and return a list of image dictionaries for the prompt.
+    Also handle txt and pdf files.
+    """
+    num_cols = 10
+    cols = st.columns(num_cols)
+    i = 0
+    content_files = []
+
+    for uploaded_file in uploaded_files:
+        if uploaded_file.file_id not in message_images_list:
+            uploaded_file_ids.append(uploaded_file.file_id)
+            try:
+                img = Image.open(uploaded_file)
+                with BytesIO() as output_buffer:
+                    img.save(output_buffer, format=img.format)
+                    content_image = output_buffer.getvalue()
+
+                content_files.append(
+                    {
+                        "image": {
+                            "format": img.format.lower(),
+                            "source": {"bytes": content_image},
+                        }
+                    }
+                )
+                with cols[i]:
+                    st.image(img, caption="", width=75)
+                    i += 1
+                if i >= num_cols:
+                    i = 0
+            except UnidentifiedImageError:
+                if uploaded_file.type in [
+                    "text/plain",
+                    "text/csv",
+                    "text/x-python-script",
+                ]:
+                    uploaded_file.seek(0)
+                    lines = uploaded_file.readlines()
+                    text = "".join(line.decode() for line in lines)
+                    content_files.append({"type": "text", "text": text})
+                    if uploaded_file.type == "text/x-python-script":
+                        st.write(f"🐍 Uploaded Python file: {uploaded_file.name}")
+                    else:
+                        st.write(f"📄 Uploaded text file: {uploaded_file.name}")
+                elif uploaded_file.type == "application/pdf":
                     pdf_file = pdfplumber.open(uploaded_file)
                     page_text = ""
                     for page in pdf_file.pages:
@@ -444,9 +545,7 @@ def rag_search(prompt: str) -> tuple[str, str]:
     index_directory = "faiss_index"
     allow_dangerous = True
 
-    # Note: The 'db' variable here was previously tied to Firebase in a different context.
-    # Ensure your FAISS index loading is independent of Firebase if you use RAG.
-    db = FAISS.load_local(
+    db = FAISS.load_local( # This 'db' variable is now undefined, as Firebase was removed.
         index_directory, embeddings, allow_dangerous_deserialization=allow_dangerous
     )
 
@@ -555,18 +654,11 @@ def main() -> None:
         store_message("user", formatted_prompt, user_prompt=original_prompt, has_context=has_context)
         
         with st.chat_message("assistant"):
-            # Ensure the response is captured before it's streamed
-            response_chunks = []
-            for chunk in generate_response(runnable_with_messagehistory, formatted_prompt):
-                response_chunks.append(chunk)
-            
-            # The actual text content used for token counting is derived from what extract_reasoning_and_text stored
-            response_text = st.session_state.get("current_llm_text", "")
-            
-            # Calculate token count for the generated response
-            # Using a simple word count as a proxy for tokens
-            token_count = len(response_text.split()) 
-            store_message("assistant", response_text, token_count=token_count)
+            response = generate_response(
+                runnable_with_messagehistory,
+                formatted_prompt
+            )
+            store_message("assistant", response)
 
 
 if __name__ == "__main__":
