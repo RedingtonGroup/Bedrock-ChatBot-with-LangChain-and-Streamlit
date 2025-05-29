@@ -28,8 +28,7 @@ load_dotenv()
 # In a real application, you would use a database (like Firebase, PostgreSQL, etc.)
 # for persistent user storage.
 REGISTERED_USERS = {
-    "test@example.com": "password123",
-    "dmin@redaibot.com": "adminpass"
+    "admin@redaibot.com": "adminpass"
 }
 
 INIT_MESSAGE = {
