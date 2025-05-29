@@ -330,6 +330,7 @@ def generate_response(
 ) -> str:
     """
     Generate a response from the conversation chain with the given input.
+    Accumulates streamed text and returns the full content (llm_content).
     """
     if isinstance(input, str):
         clean_input = re.sub(r'```thinking.*?```', '', input, flags=re.DOTALL)
@@ -337,16 +338,26 @@ def generate_response(
     else:
         formatted_input = input
 
-    # Use the logged-in user's ID as the session ID for LangChain history
-    # This ensures history is tied to the user for the current Streamlit session.
     session_id_for_langchain = st.session_state.user_id if st.session_state.user_id else "default_session"
 
-    return st.write_stream(
-        conversation.stream(
-            {"query": formatted_input},
-            config={"configurable": {"session_id": session_id_for_langchain}}
-        )
-    )
+    full_display_text = ""
+    # Create an empty container to stream the response
+    response_placeholder = st.empty() 
+
+    for chunk in conversation.stream(
+        {"query": formatted_input},
+        config={"configurable": {"session_id": session_id_for_langchain}}
+    ):
+        # Accumulate the text that is meant for display (including thinking blocks)
+        full_display_text += chunk
+        response_placeholder.markdown(full_display_text) # Update the display in real-time
+    
+    # After streaming is complete, extract the raw LLM content (without thinking blocks)
+    # from the session state, which was populated by extract_reasoning_and_text
+    llm_content_for_tokens = st.session_state.get("current_llm_text", "")
+    
+    return llm_content_for_tokens # Return the raw LLM content for token counting
+
 
 def new_chat() -> None:
     """
@@ -667,18 +678,25 @@ def main() -> None:
         store_message("user", formatted_prompt, user_prompt=original_prompt, has_context=has_context)
         
         with st.chat_message("assistant"):
-            # Ensure the response is captured before it's streamed
-            response_chunks = []
-            for chunk in generate_response(runnable_with_messagehistory, formatted_prompt):
-                response_chunks.append(chunk)
-            
-            # The actual text content used for token counting is derived from what extract_reasoning_and_text stored
-            response_text = st.session_state.get("current_llm_text", "")
+            # generate_response now returns the full response text (llm_content)
+            response_text_for_tokens = generate_response(
+                runnable_with_messagehistory,
+                formatted_prompt
+            )
             
             # Calculate token count for the generated response
             # Using a simple word count as a proxy for tokens
-            token_count = len(response_text.split()) 
-            store_message("assistant", response_text, token_count=token_count)
+            token_count = len(response_text_for_tokens.split()) 
+            
+            # store_message needs the 'display_text' for 'content' and 'llm_content' for 'llm_content'
+            # The 'content' for display should come from st.session_state["current_display_text"]
+            # The 'llm_content' for internal use is now passed as response_text_for_tokens
+            
+            store_message(
+                "assistant", 
+                st.session_state.get("current_display_text", ""), # Use display text for content
+                token_count=token_count
+            )
 
 
 if __name__ == "__main__":
