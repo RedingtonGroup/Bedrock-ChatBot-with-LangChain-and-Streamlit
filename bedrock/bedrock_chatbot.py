@@ -36,7 +36,8 @@ INIT_MESSAGE = {
     "content": "Hi there! I'm the Redington AI Bot, built to support you. How may I assist you today?",
     "llm_content": "Hi there! I'm the Redington AI Bot, built to support you. How may I assist you today?",
     "user_prompt": "",
-    "has_context": False
+    "has_context": False,
+    "token_count": 0 # Added token_count to INIT_MESSAGE
 }
 
 def set_page_config() -> None:
@@ -87,7 +88,7 @@ def register_user(email, password):
     else:
         # In a real application, you would add the user to a persistent store (e.g., database)
         # For this demo, we'll just acknowledge and instruct to use the hardcoded user.
-        st.success(f"User {email} registered successfully! For this demo, please use 'test@example.com' and 'password123' to log in.")
+        st.success(f"User {email} registered successfully! For this demo, please use 'admin@redaibot.com' and 'adminpass' to log in.")
 
 
 def logout_user():
@@ -232,7 +233,7 @@ def extract_reasoning_and_text(input: Any) -> str:
         content = chunk.content if hasattr(chunk, "content") else chunk
         if isinstance(content, list):
             for item in content:
-                if item.get("type") == "reasoning_content":
+                if item.get("type") == "reasoning_content": 
                     reasoning_text = item.get("reasoning_content", {}).get("text", "")
                     if reasoning_text:
                         if not in_reasoning_block:
@@ -266,7 +267,7 @@ def extract_reasoning_and_text(input: Any) -> str:
     st.session_state["current_display_text"] = display_text
 
 
-def store_message(role: str, content: str, user_prompt: str = "", has_context: bool = False, images: List[str] = None) -> None:
+def store_message(role: str, content: str, user_prompt: str = "", has_context: bool = False, images: List[str] = None, token_count: int = 0) -> None:
     """
     Store a message in the session state for display purposes.
     (No Firestore saving in this simplified version)
@@ -277,6 +278,7 @@ def store_message(role: str, content: str, user_prompt: str = "", has_context: b
         message["content"] = st.session_state["current_display_text"]
         if "current_llm_text" in st.session_state:
             message["llm_content"] = st.session_state["current_llm_text"]
+        message["token_count"] = token_count # Store token count for assistant messages
     else:
         message["content"] = content
         if role == "user":
@@ -378,6 +380,9 @@ def display_chat_messages(
 
             if message["role"] == "assistant":
                 display_assistant_message(message["content"])
+                # Display token count if available
+                if "token_count" in message and message["token_count"] > 0:
+                    st.caption(f"Tokens used: {message['token_count']}")
 
 
 def display_images(
@@ -413,7 +418,15 @@ def display_images(
                     else:
                         st.write(f"📄 Uploaded text file: {uploaded_file.name}")
                 elif uploaded_file.type == "application/pdf":
+                    pdf_file = pdfplumber.open(uploaded_file)
+                    page_text = ""
+                    for page in pdf_file.pages:
+                        page_text += page.extract_text()
+                    content_files.append({"type": "text", "text": page_text})
                     st.write(f"📑 Uploaded PDF file: {uploaded_file.name}")
+                    pdf_file.close()
+
+    return content_files
 
 
 def display_user_message(message: dict, debug_mode: bool = False) -> None:
@@ -545,7 +558,7 @@ def rag_search(prompt: str) -> tuple[str, str]:
     index_directory = "faiss_index"
     allow_dangerous = True
 
-    db = FAISS.load_local( # This 'db' variable is now undefined, as Firebase was removed.
+    db = FAISS.load_local(
         index_directory, embeddings, allow_dangerous_deserialization=allow_dangerous
     )
 
@@ -654,11 +667,18 @@ def main() -> None:
         store_message("user", formatted_prompt, user_prompt=original_prompt, has_context=has_context)
         
         with st.chat_message("assistant"):
-            response = generate_response(
-                runnable_with_messagehistory,
-                formatted_prompt
-            )
-            store_message("assistant", response)
+            # Ensure the response is captured before it's streamed
+            response_chunks = []
+            for chunk in generate_response(runnable_with_messagehistory, formatted_prompt):
+                response_chunks.append(chunk)
+            
+            # The actual text content used for token counting is derived from what extract_reasoning_and_text stored
+            response_text = st.session_state.get("current_llm_text", "")
+            
+            # Calculate token count for the generated response
+            # Using a simple word count as a proxy for tokens
+            token_count = len(response_text.split()) 
+            store_message("assistant", response_text, token_count=token_count)
 
 
 if __name__ == "__main__":
