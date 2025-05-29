@@ -118,7 +118,7 @@ def render_sidebar_auth_and_params() -> Tuple[Dict, str, str, bool]:
             with col2:
                 if st.button("Sign Up", use_container_width=True):
                     register_user(email, password)
-            st.info("For this demo, use 'admin@redaibot.com' and 'adminpass' to log in.")
+           # st.info("For this demo, use 'admin@redaibot.com' and 'adminpass' to log in.")
             # If not logged in, we return default empty values for model params,
             # as the main chat UI won't be rendered.
             return {}, "", "Local", False
