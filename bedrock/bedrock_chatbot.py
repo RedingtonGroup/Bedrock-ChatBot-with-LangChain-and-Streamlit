@@ -36,8 +36,7 @@ INIT_MESSAGE = {
     "content": "Hi there! I'm the Redington AI Bot, built to support you. How may I assist you today?",
     "llm_content": "Hi there! I'm the Redington AI Bot, built to support you. How may I assist you today?",
     "user_prompt": "",
-    "has_context": False,
-    "token_count": 0 # Added token_count to INIT_MESSAGE
+    "has_context": False
 }
 
 def set_page_config() -> None:
@@ -88,7 +87,7 @@ def register_user(email, password):
     else:
         # In a real application, you would add the user to a persistent store (e.g., database)
         # For this demo, we'll just acknowledge and instruct to use the hardcoded user.
-        st.success(f"User {email} registered successfully! For this demo, please use 'admin@redaibot.com' and 'adminpass' to log in.")
+        st.success(f"User {email} registered successfully! For this demo, please use 'test@example.com' and 'password123' to log in.")
 
 
 def logout_user():
@@ -119,7 +118,7 @@ def render_sidebar_auth_and_params() -> Tuple[Dict, str, str, bool]:
             with col2:
                 if st.button("Sign Up", use_container_width=True):
                     register_user(email, password)
-            st.info("For this demo, use 'admin@redaibot.com' and 'adminpass' to log in.")
+            # st.info("For this demo, use 'admin@redaibot.com' and 'adminpass' to log in.")
             # If not logged in, we return default empty values for model params,
             # as the main chat UI won't be rendered.
             return {}, "", "Local", False
@@ -233,7 +232,7 @@ def extract_reasoning_and_text(input: Any) -> str:
         content = chunk.content if hasattr(chunk, "content") else chunk
         if isinstance(content, list):
             for item in content:
-                if item.get("type") == "reasoning_content": 
+                if item.get("type") == "reasoning_content":
                     reasoning_text = item.get("reasoning_content", {}).get("text", "")
                     if reasoning_text:
                         if not in_reasoning_block:
@@ -267,7 +266,7 @@ def extract_reasoning_and_text(input: Any) -> str:
     st.session_state["current_display_text"] = display_text
 
 
-def store_message(role: str, content: str, user_prompt: str = "", has_context: bool = False, images: List[str] = None, token_count: int = 0) -> None:
+def store_message(role: str, content: str, user_prompt: str = "", has_context: bool = False, images: List[str] = None) -> None:
     """
     Store a message in the session state for display purposes.
     (No Firestore saving in this simplified version)
@@ -278,7 +277,6 @@ def store_message(role: str, content: str, user_prompt: str = "", has_context: b
         message["content"] = st.session_state["current_display_text"]
         if "current_llm_text" in st.session_state:
             message["llm_content"] = st.session_state["current_llm_text"]
-        message["token_count"] = token_count # Store token count for assistant messages
     else:
         message["content"] = content
         if role == "user":
@@ -330,7 +328,6 @@ def generate_response(
 ) -> str:
     """
     Generate a response from the conversation chain with the given input.
-    Accumulates streamed text and returns the full content (llm_content).
     """
     if isinstance(input, str):
         clean_input = re.sub(r'```thinking.*?```', '', input, flags=re.DOTALL)
@@ -338,26 +335,16 @@ def generate_response(
     else:
         formatted_input = input
 
+    # Use the logged-in user's ID as the session ID for LangChain history
+    # This ensures history is tied to the user for the current Streamlit session.
     session_id_for_langchain = st.session_state.user_id if st.session_state.user_id else "default_session"
 
-    full_display_text = ""
-    # Create an empty container to stream the response
-    response_placeholder = st.empty() 
-
-    for chunk in conversation.stream(
-        {"query": formatted_input},
-        config={"configurable": {"session_id": session_id_for_langchain}}
-    ):
-        # Accumulate the text that is meant for display (including thinking blocks)
-        full_display_text += chunk
-        response_placeholder.markdown(full_display_text) # Update the display in real-time
-    
-    # After streaming is complete, extract the raw LLM content (without thinking blocks)
-    # from the session state, which was populated by extract_reasoning_and_text
-    llm_content_for_tokens = st.session_state.get("current_llm_text", "")
-    
-    return llm_content_for_tokens # Return the raw LLM content for token counting
-
+    return st.write_stream(
+        conversation.stream(
+            {"query": formatted_input},
+            config={"configurable": {"session_id": session_id_for_langchain}}
+        )
+    )
 
 def new_chat() -> None:
     """
@@ -391,9 +378,6 @@ def display_chat_messages(
 
             if message["role"] == "assistant":
                 display_assistant_message(message["content"])
-                # Display token count if available
-                if "token_count" in message and message["token_count"] > 0:
-                    st.caption(f"Tokens used: {message['token_count']}")
 
 
 def display_images(
@@ -429,15 +413,7 @@ def display_images(
                     else:
                         st.write(f"📄 Uploaded text file: {uploaded_file.name}")
                 elif uploaded_file.type == "application/pdf":
-                    pdf_file = pdfplumber.open(uploaded_file)
-                    page_text = ""
-                    for page in pdf_file.pages:
-                        page_text += page.extract_text()
-                    content_files.append({"type": "text", "text": page_text})
                     st.write(f"📑 Uploaded PDF file: {uploaded_file.name}")
-                    pdf_file.close()
-
-    return content_files
 
 
 def display_user_message(message: dict, debug_mode: bool = False) -> None:
@@ -569,7 +545,7 @@ def rag_search(prompt: str) -> tuple[str, str]:
     index_directory = "faiss_index"
     allow_dangerous = True
 
-    db = FAISS.load_local(
+    db = FAISS.load_local( # This 'db' variable is now undefined, as Firebase was removed.
         index_directory, embeddings, allow_dangerous_deserialization=allow_dangerous
     )
 
@@ -678,25 +654,11 @@ def main() -> None:
         store_message("user", formatted_prompt, user_prompt=original_prompt, has_context=has_context)
         
         with st.chat_message("assistant"):
-            # generate_response now returns the full response text (llm_content)
-            response_text_for_tokens = generate_response(
+            response = generate_response(
                 runnable_with_messagehistory,
                 formatted_prompt
             )
-            
-            # Calculate token count for the generated response
-            # Using a simple word count as a proxy for tokens
-            token_count = len(response_text_for_tokens.split()) 
-            
-            # store_message needs the 'display_text' for 'content' and 'llm_content' for 'llm_content'
-            # The 'content' for display should come from st.session_state["current_display_text"]
-            # The 'llm_content' for internal use is now passed as response_text_for_tokens
-            
-            store_message(
-                "assistant", 
-                st.session_state.get("current_display_text", ""), # Use display text for content
-                token_count=token_count
-            )
+            store_message("assistant", response)
 
 
 if __name__ == "__main__":
