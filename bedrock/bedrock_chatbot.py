@@ -36,8 +36,7 @@ INIT_MESSAGE = {
     "content": "Hi there! I'm the Redington AI Bot, built to support you. How may I assist you today?",
     "llm_content": "Hi there! I'm the Redington AI Bot, built to support you. How may I assist you today?",
     "user_prompt": "",
-    "has_context": False,
-    "token_count": 0 # Added token_count to INIT_MESSAGE
+    "has_context": False
 }
 
 def set_page_config() -> None:
@@ -88,7 +87,7 @@ def register_user(email, password):
     else:
         # In a real application, you would add the user to a persistent store (e.g., database)
         # For this demo, we'll just acknowledge and instruct to use the hardcoded user.
-        st.success(f"User {email} registered successfully! For this demo, please use 'admin@redaibot.com' and 'adminpass' to log in.")
+        st.success(f"User {email} registered successfully! For this demo, please use 'test@example.com' and 'password123' to log in.")
 
 
 def logout_user():
@@ -119,7 +118,7 @@ def render_sidebar_auth_and_params() -> Tuple[Dict, str, str, bool]:
             with col2:
                 if st.button("Sign Up", use_container_width=True):
                     register_user(email, password)
-            st.info("For this demo, use 'admin@redaibot.com' and 'adminpass' to log in.")
+            # st.info("For this demo, use 'admin@redaibot.com' and 'adminpass' to log in.")
             # If not logged in, we return default empty values for model params,
             # as the main chat UI won't be rendered.
             return {}, "", "Local", False
@@ -233,7 +232,7 @@ def extract_reasoning_and_text(input: Any) -> str:
         content = chunk.content if hasattr(chunk, "content") else chunk
         if isinstance(content, list):
             for item in content:
-                if item.get("type") == "reasoning_content": 
+                if item.get("type") == "reasoning_content":
                     reasoning_text = item.get("reasoning_content", {}).get("text", "")
                     if reasoning_text:
                         if not in_reasoning_block:
@@ -267,26 +266,24 @@ def extract_reasoning_and_text(input: Any) -> str:
     st.session_state["current_display_text"] = display_text
 
 
-def store_message(role: str, content: str, user_prompt: str = "", has_context: bool = False, images: List[str] = None, token_count: int = 0) -> None:
+def store_message(role: str, content: str, user_prompt: str = "", has_context: bool = False, images: List[str] = None) -> None:
     """
     Store a message in the session state for display purposes.
     (No Firestore saving in this simplified version)
     """
     message = {"role": role, "has_context": has_context}
     
-    # If it's an assistant message, use the content from current_display_text
-    # and store the token_count.
-    if role == "assistant":
-        message["content"] = st.session_state.get("current_display_text", "")
-        message["llm_content"] = st.session_state.get("current_llm_text", "")
-        message["token_count"] = token_count
-    else: # For user messages
+    if role == "assistant" and "current_display_text" in st.session_state:
+        message["content"] = st.session_state["current_display_text"]
+        if "current_llm_text" in st.session_state:
+            message["llm_content"] = st.session_state["current_llm_text"]
+    else:
         message["content"] = content
         if role == "user":
             message["llm_content"] = re.sub(r'```thinking.*?```', '', content, flags=re.DOTALL)
             message["user_prompt"] = user_prompt
         else:
-            message["llm_content"] = content # Fallback for other roles if any
+            message["llm_content"] = content
             
     if images:
         message["images"] = images
@@ -331,7 +328,6 @@ def generate_response(
 ) -> str:
     """
     Generate a response from the conversation chain with the given input.
-    Accumulates streamed text and returns the full content (llm_content).
     """
     if isinstance(input, str):
         clean_input = re.sub(r'```thinking.*?```', '', input, flags=re.DOTALL)
@@ -339,24 +335,16 @@ def generate_response(
     else:
         formatted_input = input
 
+    # Use the logged-in user's ID as the session ID for LangChain history
+    # This ensures history is tied to the user for the current Streamlit session.
     session_id_for_langchain = st.session_state.user_id if st.session_state.user_id else "default_session"
 
-    # Create an empty container to stream the response
-    response_placeholder = st.empty() 
-
-    # Iterate through the streamed chunks and display them
-    for chunk in conversation.stream(
-        {"query": formatted_input},
-        config={"configurable": {"session_id": session_id_for_langchain}}
-    ):
-        # The extract_reasoning_and_text function (which is part of the runnable)
-        # updates st.session_state["current_display_text"] and st.session_state["current_llm_text"]
-        # as it processes chunks. We just need to display the current_display_text.
-        response_placeholder.markdown(st.session_state.get("current_display_text", ""))
-    
-    # After streaming is complete, return the raw LLM content for token counting
-    return st.session_state.get("current_llm_text", "")
-
+    return st.write_stream(
+        conversation.stream(
+            {"query": formatted_input},
+            config={"configurable": {"session_id": session_id_for_langchain}}
+        )
+    )
 
 def new_chat() -> None:
     """
@@ -370,8 +358,7 @@ def new_chat() -> None:
         del st.session_state["current_llm_text"]
     if "current_display_text" in st.session_state:
         del st.session_state["current_display_text"]
-    # Removed st.rerun() as it's not needed and causes the "no-op" warning.
-    # Streamlit will automatically re-run due to session state changes.
+    st.rerun()
 
 
 def display_chat_messages(
@@ -391,9 +378,6 @@ def display_chat_messages(
 
             if message["role"] == "assistant":
                 display_assistant_message(message["content"])
-                # Display token count if available
-                if "token_count" in message and message["token_count"] > 0:
-                    st.caption(f"Tokens used: {message['token_count']}")
 
 
 def display_images(
@@ -429,44 +413,154 @@ def display_images(
                     else:
                         st.write(f"📄 Uploaded text file: {uploaded_file.name}")
                 elif uploaded_file.type == "application/pdf":
-                    # This part needs to be updated to handle PDF content extraction.
-                    # For now, it will just write the file name.
                     st.write(f"📑 Uploaded PDF file: {uploaded_file.name}")
+
+
+def display_user_message(message: dict, debug_mode: bool = False) -> None:
+    """
+    Display user message in the chat message.
+    Shows clean user prompt by default, full content in debug mode.
+    """
+    if debug_mode and message.get("has_context", False):
+        user_prompt = message.get("user_prompt", "")
+        if user_prompt:
+            st.markdown("**Your Question:**")
+            st.markdown(user_prompt)
+            
+            with st.expander("🔍 RAG Context (Debug)", expanded=False):
+                full_content = message["content"]
+                if "<search>" in full_content and "</search>" in full_content:
+                    rag_content = full_content.split("<search>")[1].split("</search>")[0]
+                    st.markdown("**Retrieved Context:**")
+                    st.text(rag_content.strip())
+    else:
+        user_prompt = message.get("user_prompt", "")
+        if user_prompt:
+            st.markdown(user_prompt)
+        else:
+            message_content = message["content"]
+            if isinstance(message_content, str):
+                clean_content = message_content.split("</search>\n\n", 1)[-1]
+                st.markdown(clean_content)
+            elif isinstance(message_content, dict):
+                # This part might need adjustment based on how your `formatted_input` is structured
+                # if it's a dict with 'input' key. For now, assuming it's a simple text message.
+                if "input" in message_content and isinstance(message_content["input"], list) and message_content["input"]:
+                    if isinstance(message_content["input"][0], dict) and "content" in message_content["input"][0] and isinstance(message_content["input"][0]["content"], list) and message_content["input"][0]["content"]:
+                        if isinstance(message_content["input"][0]["content"][0], dict) and "text" in message_content["input"][0]["content"][0]:
+                            message_text = message_content["input"][0]["content"][0]["text"]
+                            clean_content = message_text.split("</search>\n\n", 1)[-1]
+                            st.markdown(clean_content)
+                        else:
+                            st.markdown("Error: Unexpected message content structure.")
+                    else:
+                        st.markdown("Error: Unexpected message content structure.")
+                else:
+                    st.markdown("Error: Unexpected message content structure.")
+            else:
+                st.markdown(message_content[0]["text"])
+
+
+def display_assistant_message(message_content: Union[str, dict]) -> None:
+    """
+    Display assistant message in the chat message.
+    """
+    if isinstance(message_content, str):
+        st.markdown(message_content)
+    elif "response" in message_content:
+        st.markdown(message_content["response"])
+
+
+def display_uploaded_files(
+    uploaded_files: List[st.runtime.uploaded_file_manager.UploadedFile],
+    message_images_list: List[str],
+    uploaded_file_ids: List[str],
+) -> List[Union[dict, str]]:
+    """
+    Display uploaded images and return a list of image dictionaries for the prompt.
+    Also handle txt and pdf files.
+    """
+    num_cols = 10
+    cols = st.columns(num_cols)
+    i = 0
+    content_files = []
+
+    for uploaded_file in uploaded_files:
+        if uploaded_file.file_id not in message_images_list:
+            uploaded_file_ids.append(uploaded_file.file_id)
+            try:
+                img = Image.open(uploaded_file)
+                with BytesIO() as output_buffer:
+                    img.save(output_buffer, format=img.format)
+                    content_image = output_buffer.getvalue()
+
+                content_files.append(
+                    {
+                        "image": {
+                            "format": img.format.lower(),
+                            "source": {"bytes": content_image},
+                        }
+                    }
+                )
+                with cols[i]:
+                    st.image(img, caption="", width=75)
+                    i += 1
+                if i >= num_cols:
+                    i = 0
+            except UnidentifiedImageError:
+                if uploaded_file.type in [
+                    "text/plain",
+                    "text/csv",
+                    "text/x-python-script",
+                ]:
+                    uploaded_file.seek(0)
+                    lines = uploaded_file.readlines()
+                    text = "".join(line.decode() for line in lines)
+                    content_files.append({"type": "text", "text": text})
+                    if uploaded_file.type == "text/x-python-script":
+                        st.write(f"🐍 Uploaded Python file: {uploaded_file.name}")
+                    else:
+                        st.write(f"📄 Uploaded text file: {uploaded_file.name}")
+                elif uploaded_file.type == "application/pdf":
+                    pdf_file = pdfplumber.open(uploaded_file)
+                    page_text = ""
+                    for page in pdf_file.pages:
+                        page_text += page.extract_text()
+                    content_files.append({"type": "text", "text": page_text})
+                    st.write(f"📑 Uploaded PDF file: {uploaded_file.name}")
+                    pdf_file.close()
+
+    return content_files
 
 
 def rag_search(prompt: str) -> tuple[str, str]:
     """
     Perform RAG search and return both the enhanced prompt and RAG context.
     """
-    # Ensure search_index is properly defined and returns a valid index or path
-    # If search_index is meant to load the FAISS index, it should return the loaded index.
-    # If it returns a path, FAISS.load_local should be called with that path.
-    
-    # Assuming search_index returns the path to the FAISS index
-    index_path = "faiss_index" # This should be where your FAISS index is saved
-
-    try:
-        embeddings = BedrockEmbeddings(model_id="amazon.titan-embed-text-v2:0")
-        # Load the FAISS index
-        db = FAISS.load_local(
-            index_path, embeddings, allow_dangerous_deserialization=True
-        )
-        
-        docs = db.similarity_search(prompt)
-
-        rag_context = "\n\n".join(doc.page_content for doc in docs)
-        
-        rag_content = (
-            "Here are the RAG search results: \n\n<search>\n\n"
-            + rag_context
-            + "\n\n</search>\n\n"
-        )
-        enhanced_prompt = rag_content + prompt
-        
-        return enhanced_prompt, rag_context
-    except Exception as e:
-        st.error(f"RAG Search Error: {e}. Ensure 'faiss_index' exists and 'bedrock_embedder.py' is correctly configured.")
+    docs = search_index(prompt, "faiss_index")
+    if isinstance(docs[0], str):
         return prompt, "Error retrieving RAG context"
+    
+    embeddings = BedrockEmbeddings(model_id="amazon.titan-embed-text-v2:0")
+    index_directory = "faiss_index"
+    allow_dangerous = True
+
+    db = FAISS.load_local( # This 'db' variable is now undefined, as Firebase was removed.
+        index_directory, embeddings, allow_dangerous_deserialization=allow_dangerous
+    )
+
+    docs = db.similarity_search(prompt)
+
+    rag_context = "\n\n".join(doc.page_content for doc in docs)
+    
+    rag_content = (
+        "Here are the RAG search results: \n\n<search>\n\n"
+        + rag_context
+        + "\n\n</search>\n\n"
+    )
+    enhanced_prompt = rag_content + prompt
+    
+    return enhanced_prompt, rag_context
 
 
 def web_or_local(prompt: str, web_local_rag: str) -> tuple[str, bool]:
@@ -560,25 +654,11 @@ def main() -> None:
         store_message("user", formatted_prompt, user_prompt=original_prompt, has_context=has_context)
         
         with st.chat_message("assistant"):
-            # generate_response now returns the full response text (llm_content)
-            response_text_for_tokens = generate_response(
+            response = generate_response(
                 runnable_with_messagehistory,
                 formatted_prompt
             )
-            
-            # Calculate token count for the generated response
-            # Using a simple word count as a proxy for tokens
-            token_count = len(response_text_for_tokens.split()) 
-            
-            # store_message needs the 'display_text' for 'content' and 'llm_content' for 'llm_content'
-            # The 'content' for display should come from st.session_state["current_display_text"]
-            # The 'llm_content' for internal use is now passed as response_text_for_tokens
-            
-            store_message(
-                "assistant", 
-                st.session_state.get("current_display_text", ""), # Use display text for content
-                token_count=token_count
-            )
+            store_message("assistant", response)
 
 
 if __name__ == "__main__":
