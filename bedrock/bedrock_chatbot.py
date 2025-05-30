@@ -46,8 +46,7 @@ INIT_MESSAGE = {
     "content": "Hi there! I'm the Redington AI Bot, built to support you. How may I assist you today?",
     "llm_content": "Hi there! I'm the Redington AI Bot, built to support you. How may I assist you today?",
     "user_prompt": "",
-    "has_context": False,
-    "token_count": 0 # Added token_count to INIT_MESSAGE
+    "has_context": False
 }
 
 def set_page_config() -> None:
@@ -277,7 +276,7 @@ def extract_reasoning_and_text(input: Any) -> str:
     st.session_state["current_display_text"] = display_text
 
 
-def store_message(role: str, content: str, user_prompt: str = "", has_context: bool = False, images: List[str] = None, token_count: int = 0) -> None:
+def store_message(role: str, content: str, user_prompt: str = "", has_context: bool = False, images: List[str] = None) -> None:
     """
     Store a message in the session state for display purposes.
     (No Firestore saving in this simplified version)
@@ -285,11 +284,10 @@ def store_message(role: str, content: str, user_prompt: str = "", has_context: b
     message = {"role": role, "has_context": has_context}
     
     # If it's an assistant message, use the content from current_display_text
-    # and store the token_count.
-    if role == "assistant":
-        message["content"] = st.session_state.get("current_display_text", "")
-        message["llm_content"] = st.session_state.get("current_llm_text", "")
-        message["token_count"] = token_count
+    if role == "assistant" and "current_display_text" in st.session_state:
+        message["content"] = st.session_state["current_display_text"]
+        if "current_llm_text" in st.session_state:
+            message["llm_content"] = st.session_state["current_llm_text"]
     else: # For user messages
         message["content"] = content
         if role == "user":
@@ -414,9 +412,9 @@ def display_chat_messages(
 
             if message["role"] == "assistant":
                 display_assistant_message(message["content"])
-                # Display token count if available
-                if "token_count" in message and message["token_count"] > 0:
-                    st.caption(f"Tokens used: {message['token_count']}")
+                # Display token count if available (if it were still tracked)
+                # if "token_count" in message and message["token_count"] > 0:
+                #    st.caption(f"Tokens used: {message['token_count']}")
 
 
 def display_images(
@@ -697,7 +695,7 @@ def main() -> None:
                 # Display the guardrail message
                 st.markdown(guarded_response)
             # Store the guardrail message as an assistant message without LLM content
-            store_message("assistant", guarded_response, token_count=0) # Token count is 0 for guardrail responses
+            store_message("assistant", guarded_response) # Removed token_count
         else:
             # If not guarded, proceed with RAG/Local processing and LLM call
             formatted_prompt, has_context = web_or_local(prompt, web_local)
@@ -713,17 +711,14 @@ def main() -> None:
             store_message("user", formatted_prompt, user_prompt=original_prompt, has_context=has_context)
             
             with st.chat_message("assistant"):
-                response_text_for_tokens = generate_response(
+                response_text_for_tokens = generate_response( # Kept this variable name for consistency, but it's not used for token count
                     runnable_with_messagehistory,
                     formatted_prompt
                 )
                 
-                token_count = len(response_text_for_tokens.split()) 
-                
                 store_message(
                     "assistant", 
-                    st.session_state.get("current_display_text", ""),
-                    token_count=token_count
+                    st.session_state.get("current_display_text", "")
                 )
 
 
