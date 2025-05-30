@@ -98,11 +98,11 @@ class Guardrails:
             # or a warning if sensitive content is detected.
             return True, f"output {reason}", "I'm sorry, but I cannot provide a response that contains inappropriate content. Please rephrase your query."
 
-        # 2. Length constraint
-        moderated_response = self.moderator.enforce_length_limit(llm_response, self.max_output_length)
-        if moderated_response != llm_response:
-             # If truncated, you might want to append a message indicating it
-            return True, f"output exceeds max length ({self.max_output_length} characters)", moderated_response + "\n\n(Response truncated due to length limit.)"
+        # # 2. Length constraint
+        # moderated_response = self.moderator.enforce_length_limit(llm_response, self.max_output_length)
+        # if moderated_response != llm_response:
+        #      # If truncated, you might want to append a message indicating it
+        #     return True, f"output exceeds max length ({self.max_output_length} characters)", moderated_response + "\n\n(Response truncated due to length limit.)"
 
         # 3. Basic topic restriction (example: prevent medical advice in LLM output)
         # if self.moderator.check_topic_restriction(llm_response, "medical advice"):
