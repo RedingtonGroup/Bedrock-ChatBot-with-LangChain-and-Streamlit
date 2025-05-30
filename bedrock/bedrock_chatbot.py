@@ -21,8 +21,14 @@ from models import ChatModel
 from role_prompt import role_prompt
 from bedrock_embedder import search_index # Assuming this is correctly implemented
 
+# Import the new Guardrails class
+from guardrails import Guardrails
+
 # Load the env variables
 load_dotenv()
+
+# Initialize Guardrails (you can adjust max_input_length and max_output_length)
+app_guardrails = Guardrails(max_input_length=1000, max_output_length=4000)
 
 # --- Simple User Storage (In-memory for demonstration) ---
 # In a real application, you would use a database (like Firebase, PostgreSQL, etc.)
@@ -30,16 +36,6 @@ load_dotenv()
 REGISTERED_USERS = {
     "admin@redaibot.com": "adminpass"
 }
-
-# --- Guardrail Configuration ---
-DISALLOWED_KEYWORDS = [
-    "harmful", "violence", "hate speech", "illegal", "dangerous",
-    "unethical", "discriminatory", "sexual", "exploit", "abuse",
-    "self-harm", "weapons", "drugs", "terrorism", "spam", "phishing",
-    "malware", "sensitive personal information", "private data"
-]
-GUARDRAIL_MESSAGE = "I cannot respond to queries that contain sensitive or inappropriate content. Please rephrase your question."
-
 
 INIT_MESSAGE = {
     "role": "assistant",
@@ -128,7 +124,7 @@ def render_sidebar_auth_and_params() -> Tuple[Dict, str, str, bool]:
             with col2:
                 if st.button("Sign Up", use_container_width=True):
                     register_user(email, password)
-            st.info("For this demo, use 'admin@redaibot.com' and 'adminpass' to log in.")
+            # st.info("For this demo, use 'admin@redaibot.com' and 'adminpass' to log in.")
             # If not logged in, we return default empty values for model params,
             # as the main chat UI won't be rendered.
             return {}, "", "Local", False
@@ -242,7 +238,7 @@ def extract_reasoning_and_text(input: Any) -> str:
         content = chunk.content if hasattr(chunk, "content") else chunk
         if isinstance(content, list):
             for item in content:
-                if item.get("type") == "reasoning_content": 
+                if item.get("type") == "reasoning_content":
                     reasoning_text = item.get("reasoning_content", {}).get("text", "")
                     if reasoning_text:
                         if not in_reasoning_block:
@@ -283,18 +279,17 @@ def store_message(role: str, content: str, user_prompt: str = "", has_context: b
     """
     message = {"role": role, "has_context": has_context}
     
-    # If it's an assistant message, use the content from current_display_text
     if role == "assistant" and "current_display_text" in st.session_state:
         message["content"] = st.session_state["current_display_text"]
         if "current_llm_text" in st.session_state:
             message["llm_content"] = st.session_state["current_llm_text"]
-    else: # For user messages
+    else:
         message["content"] = content
         if role == "user":
             message["llm_content"] = re.sub(r'```thinking.*?```', '', content, flags=re.DOTALL)
             message["user_prompt"] = user_prompt
         else:
-            message["llm_content"] = content # Fallback for other roles if any
+            message["llm_content"] = content
             
     if images:
         message["images"] = images
@@ -329,6 +324,10 @@ def init_runnablewithmessagehistory(
         history_messages_key="chat_history",
     )
     
+    # The output from the LLM will first pass through extract_reasoning_and_text
+    # and then can be moderated before being displayed.
+    # We will handle output moderation in the `generate_response` function,
+    # as `extract_reasoning_and_text` is already a generator.
     final_runnable = runnable_with_history | extract_reasoning_and_text
 
     return final_runnable
@@ -338,8 +337,7 @@ def generate_response(
     conversation: RunnableWithMessageHistory, input: Union[str, List[dict]]
 ) -> str:
     """
-    Generate a response from the conversation chain with the given input.
-    Accumulates streamed text and returns the full content (llm_content).
+    Generate a response from the conversation chain with the given input and apply output guardrails.
     """
     if isinstance(input, str):
         clean_input = re.sub(r'```thinking.*?```', '', input, flags=re.DOTALL)
@@ -349,21 +347,31 @@ def generate_response(
 
     session_id_for_langchain = st.session_state.user_id if st.session_state.user_id else "default_session"
 
-    # Create an empty container to stream the response
-    response_placeholder = st.empty() 
+    # Capture the full raw response before applying moderation to ensure it's complete
+    full_response_text = ""
+    response_placeholder = st.empty()
 
-    # Iterate through the streamed chunks and display them
-    for chunk in conversation.stream(
+    response_generator = conversation.stream(
         {"query": formatted_input},
         config={"configurable": {"session_id": session_id_for_langchain}}
-    ):
-        # The extract_reasoning_and_text function (which is part of the runnable)
-        # updates st.session_state["current_display_text"] and st.session_state["current_llm_text"]
-        # as it processes chunks. We just need to display the current_display_text.
-        response_placeholder.markdown(st.session_state.get("current_display_text", ""))
-    
-    # After streaming is complete, return the raw LLM content for token counting
-    return st.session_state.get("current_llm_text", "")
+    )
+
+    # Stream the raw response to the user while collecting chunks
+    for chunk in response_generator:
+        full_response_text += chunk
+        response_placeholder.markdown(full_response_text)
+        
+
+    # Apply output guardrails to the *full* generated response
+    is_flagged, reason, moderated_output = app_guardrails.apply_output_guardrails(full_response_text)
+
+    if is_flagged:
+        # If flagged, update the displayed message and return the moderated version
+        response_placeholder.markdown(moderated_output)
+        st.warning(f"Guardrail triggered for LLM output: {reason}")
+        return moderated_output # Return the moderated message to be stored
+
+    return full_response_text # Return the original full response if not flagged
 
 
 def new_chat() -> None:
@@ -378,21 +386,7 @@ def new_chat() -> None:
         del st.session_state["current_llm_text"]
     if "current_display_text" in st.session_state:
         del st.session_state["current_display_text"]
-    # Removed st.rerun() as it's not needed and causes the "no-op" warning.
-    # Streamlit will automatically re-run due to session state changes.
-
-
-def apply_input_guardrails(prompt: str) -> Tuple[str, bool]:
-    """
-    Applies input guardrails to the user's prompt.
-    Returns (processed_prompt, is_guarded_response).
-    If a guardrail is triggered, returns (GUARDRAIL_MESSAGE, True).
-    Otherwise, returns (original_prompt, False).
-    """
-    for keyword in DISALLOWED_KEYWORDS:
-        if re.search(r'\b' + re.escape(keyword) + r'\b', prompt, re.IGNORECASE):
-            return GUARDRAIL_MESSAGE, True
-    return prompt, False
+    st.rerun()
 
 
 def display_chat_messages(
@@ -412,9 +406,6 @@ def display_chat_messages(
 
             if message["role"] == "assistant":
                 display_assistant_message(message["content"])
-                # Display token count if available (if it were still tracked)
-                # if "token_count" in message and message["token_count"] > 0:
-                #    st.caption(f"Tokens used: {message['token_count']}")
 
 
 def display_images(
@@ -450,8 +441,6 @@ def display_images(
                     else:
                         st.write(f"📄 Uploaded text file: {uploaded_file.name}")
                 elif uploaded_file.type == "application/pdf":
-                    # This part needs to be updated to handle PDF content extraction.
-                    # For now, it will just write the file name.
                     st.write(f"📑 Uploaded PDF file: {uploaded_file.name}")
 
 
@@ -576,35 +565,33 @@ def rag_search(prompt: str) -> tuple[str, str]:
     """
     Perform RAG search and return both the enhanced prompt and RAG context.
     """
-    # Ensure search_index is properly defined and returns a valid index or path
-    # If search_index is meant to load the FAISS index, it should return the loaded index.
-    # If it returns a path, FAISS.load_local should be called with that path.
-    
-    # Assuming search_index returns the path to the FAISS index
-    index_path = "faiss_index" # This should be where your FAISS index is saved
-
-    try:
-        embeddings = BedrockEmbeddings(model_id="amazon.titan-embed-text-v2:0")
-        # Load the FAISS index
-        db = FAISS.load_local(
-            index_path, embeddings, allow_dangerous_deserialization=True
-        )
-        
-        docs = db.similarity_search(prompt)
-
-        rag_context = "\n\n".join(doc.page_content for doc in docs)
-        
-        rag_content = (
-            "Here are the RAG search results: \n\n<search>\n\n"
-            + rag_context
-            + "\n\n</search>\n\n"
-        )
-        enhanced_prompt = rag_content + prompt
-        
-        return enhanced_prompt, rag_context
-    except Exception as e:
-        st.error(f"RAG Search Error: {e}. Ensure 'faiss_index' exists and 'bedrock_embedder.py' is correctly configured.")
+    docs = search_index(prompt, "faiss_index")
+    if isinstance(docs[0], str):
         return prompt, "Error retrieving RAG context"
+    
+    embeddings = BedrockEmbeddings(model_id="amazon.titan-embed-text-v2:0")
+    index_directory = "faiss_index"
+    allow_dangerous = True
+
+    # Ensure this part is correctly set up to load your FAISS index
+    # without relying on Firebase. If 'db' was previously loaded from Firebase,
+    # you need to ensure FAISS.load_local works independently.
+    db = FAISS.load_local(
+        index_directory, embeddings, allow_dangerous_deserialization=allow_dangerous
+    )
+
+    docs = db.similarity_search(prompt)
+
+    rag_context = "\n\n".join(doc.page_content for doc in docs)
+    
+    rag_content = (
+        "Here are the RAG search results: \n\n<search>\n\n"
+        + rag_context
+        + "\n\n</search>\n\n"
+    )
+    enhanced_prompt = rag_content + prompt
+    
+    return enhanced_prompt, rag_context
 
 
 def web_or_local(prompt: str, web_local_rag: str) -> tuple[str, bool]:
@@ -683,43 +670,36 @@ def main() -> None:
         original_prompt = prompt
         
         # Apply input guardrails
-        guarded_response, is_guarded = apply_input_guardrails(original_prompt)
-
-        if is_guarded:
-            with st.chat_message("user"):
-                # Display the original user prompt
-                st.markdown(original_prompt)
+        is_flagged_input, reason_input, moderated_original_prompt = app_guardrails.apply_input_guardrails(original_prompt)
+        
+        if is_flagged_input:
+            st.error(f"Your input was flagged: {reason_input}. Please modify your query.")
             store_message("user", original_prompt, user_prompt=original_prompt, has_context=False)
+            store_message("assistant", f"I cannot process your request because it {reason_input}. Please try a different query.")
+            return
 
-            with st.chat_message("assistant"):
-                # Display the guardrail message
-                st.markdown(guarded_response)
-            # Store the guardrail message as an assistant message without LLM content
-            store_message("assistant", guarded_response) # Removed token_count
-        else:
-            # If not guarded, proceed with RAG/Local processing and LLM call
-            formatted_prompt, has_context = web_or_local(prompt, web_local)
-            
-            with st.chat_message("user"):
-                temp_message = {
-                    "content": formatted_prompt,
-                    "user_prompt": original_prompt,
-                    "has_context": has_context
-                }
-                display_user_message(temp_message, debug_mode)
+        # Note: If RAG or Web search is selected, this will use the functions above.
+        # Ensure your RAG setup (bedrock_embedder.py and FAISS index loading)
+        # is independent of Firebase if you use it.
+        # Use the moderated prompt for RAG/Web search
+        formatted_prompt, has_context = web_or_local(moderated_original_prompt, web_local)
+        
+        with st.chat_message("user"):
+            temp_message = {
+                "content": formatted_prompt,
+                "user_prompt": original_prompt, # Display original for user, but LLM gets moderated
+                "has_context": has_context
+            }
+            display_user_message(temp_message, debug_mode)
 
-            store_message("user", formatted_prompt, user_prompt=original_prompt, has_context=has_context)
-            
-            with st.chat_message("assistant"):
-                response_text_for_tokens = generate_response( # Kept this variable name for consistency, but it's not used for token count
-                    runnable_with_messagehistory,
-                    formatted_prompt
-                )
-                
-                store_message(
-                    "assistant", 
-                    st.session_state.get("current_display_text", "")
-                )
+        store_message("user", formatted_prompt, user_prompt=original_prompt, has_context=has_context)
+        
+        with st.chat_message("assistant"):
+            response = generate_response(
+                runnable_with_messagehistory,
+                formatted_prompt # LLM receives the formatted (and potentially RAG-enhanced) prompt
+            )
+            store_message("assistant", response)
 
 
 if __name__ == "__main__":
