@@ -28,7 +28,8 @@ from guardrails import Guardrails
 load_dotenv()
 
 # Initialize Guardrails (you can adjust max_input_length and max_output_length)
-app_guardrails = Guardrails(max_input_length=1000, max_output_length=4000)
+# app_guardrails = Guardrails(max_input_length=1000, max_output_length=4000)
+app_guardrails = Guardrails() # NO ARGUMENTS PASSED
 
 # --- Simple User Storage (In-memory for demonstration) ---
 # In a real application, you would use a database (like Firebase, PostgreSQL, etc.)
